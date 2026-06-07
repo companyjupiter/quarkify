@@ -125,3 +125,32 @@ test('segment globs support nested double-star and single-star patterns', async 
     assert.ok(fileFolders.some((name) => name.includes('Scratch.java')));
   });
 });
+
+test('materialized file folders do not collide for similar source paths', async () => {
+  await withTempWorkspace(async (tmp) => {
+    const srcDir = path.join(tmp, 'src');
+    const outDir = path.join(tmp, 'out');
+    const configPath = path.join(tmp, 'config.mjs');
+
+    await mkdir(path.join(srcDir, 'a'), { recursive: true });
+    await writeFile(path.join(srcDir, 'a', 'b.js'), 'export function nestedThing() { return 1; }\n', 'utf8');
+    await writeFile(path.join(srcDir, 'a_b.js'), 'export function flatThing() { return 2; }\n', 'utf8');
+    await writeConfig(configPath, `{
+      name: 'path-collision-regression',
+      srcDir: ${JSON.stringify(srcDir)},
+      outDir: ${JSON.stringify(outDir)},
+      sourceFiles: ['a/b.js', 'a_b.js'],
+      perfData: {},
+      guessRole() { return 'general'; },
+    }`);
+
+    const result = runQuarkify(configPath);
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal((await readdir(path.join(outDir, 'quark'))).length, 2);
+    assert.equal((await readdir(path.join(outDir, '_mirror', 'by_file'))).length, 2);
+    assert.ok(existsSync(path.join(outDir, '_axon')));
+    assert.ok(existsSync(path.join(outDir, 'index.html')));
+    assert.ok(existsSync(path.join(outDir, 'ai_context_guide.txt')));
+  });
+});
