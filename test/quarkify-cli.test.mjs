@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,6 +29,14 @@ function runQuarkify(configPath) {
     encoding: 'utf8',
   });
 }
+
+test('package metadata points at the real CLI entrypoint', async () => {
+  const pkg = JSON.parse(await readFile(path.join(repoRoot, 'package.json'), 'utf8'));
+
+  assert.equal(pkg.main, 'quarkify.mjs');
+  assert.equal(pkg.bin?.quarkify, './quarkify.mjs');
+  assert.ok(existsSync(path.join(repoRoot, pkg.main)));
+});
 
 test('CLI materializes quark output, mirrors, axons, and guide artifacts', async () => {
   await withTempWorkspace(async (tmp) => {

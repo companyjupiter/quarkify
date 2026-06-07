@@ -2,7 +2,10 @@
   "name": "quarkify",
   "version": "1.0.0",
   "description": "> **\"Everything is a folder\" Philosophy — Local-First Static Analysis Engine & Source Code Topology Map Builder**",
-  "main": "index.js",
+  "main": "quarkify.mjs",
+  "bin": {
+    "quarkify": "./quarkify.mjs"
+  },
   "scripts": {
     "test": "node --test test/*.test.mjs"
   },
