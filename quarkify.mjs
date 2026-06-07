@@ -36,6 +36,7 @@ import fs from 'fs';
 import path from 'path';
 import { pathToFileURL } from 'url';
 import { execSync } from 'child_process';
+import { createHash } from 'crypto';
 
 // ─── CLI / 컨피그 로드 (Load CLI / Config) ───
 const configPath = process.argv[2];
@@ -80,6 +81,26 @@ for (const field of requiredFields) {
 function safeName(name) {
   if (!name) return '_anonymous_';
   return name.replace(/[^a-zA-Z0-9_$.]/g, '_').substring(0, 100);
+}
+function safePathPart(part) {
+  if (!part) return '_empty_';
+  let out = '';
+  for (const ch of part) {
+    if (/^[a-zA-Z0-9_$.]$/.test(ch)) {
+      out += ch;
+    } else {
+      out += `_x${ch.codePointAt(0).toString(16).padStart(2, '0')}_`;
+    }
+  }
+  return out;
+}
+function safePathName(name) {
+  if (!name) return '_anonymous_';
+  const normalized = String(name).replace(/\\/g, '/');
+  const encoded = normalized.split('/').map(safePathPart).join('__path__');
+  if (encoded.length <= 180) return encoded;
+  const hash = createHash('sha1').update(normalized).digest('hex').substring(0, 12);
+  return `${encoded.substring(0, 160)}__hash_${hash}`;
 }
 function mkdirSync(d) { fs.mkdirSync(d, { recursive: true }); }
 function ensureDir(d) { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); }
@@ -881,7 +902,7 @@ class QuarkFolderEngine {
     const text = fs.readFileSync(absPath, 'utf-8');
     const lines = text.split('\n');
     const ext = path.extname(absPath);
-    const fileFolderName = `file__${safeName(relPath)}`;
+    const fileFolderName = `file__${safePathName(relPath)}`;
     const fileQuarkPath = path.join(this.quarkDir, fileFolderName);
     mkdirSync(fileQuarkPath);
 
@@ -1575,7 +1596,7 @@ class QuarkFolderEngine {
     this.mirrors.by_kind[kind].push(relPath);
     if (!this.mirrors.by_role[role]) this.mirrors.by_role[role] = [];
     this.mirrors.by_role[role].push(relPath);
-    const fileKey = safeName(file);
+    const fileKey = safePathName(file);
     if (!this.mirrors.by_file[fileKey]) this.mirrors.by_file[fileKey] = [];
     this.mirrors.by_file[fileKey].push(relPath);
     if (!this.mirrors.by_depth['depth_1']) this.mirrors.by_depth['depth_1'] = [];
@@ -1595,7 +1616,7 @@ class QuarkFolderEngine {
         const keyDir = path.join(categoryDir, safeName(key));
         mkdirSync(keyDir);
         for (const relPath of paths) {
-          const entryDir = path.join(keyDir, safeName(relPath));
+          const entryDir = path.join(keyDir, safePathName(relPath));
           mkdirSync(entryDir);
           this.axons.push({ quark: relPath, mirror: path.relative(this.outputDir, entryDir), category, key });
         }
@@ -1606,7 +1627,7 @@ class QuarkFolderEngine {
   buildAxons() {
     const axonIndex = {};
     for (const axon of this.axons) {
-      const quarkKey = safeName(axon.quark);
+      const quarkKey = safePathName(axon.quark);
       if (!axonIndex[quarkKey]) axonIndex[quarkKey] = [];
       axonIndex[quarkKey].push({ category: axon.category, key: axon.key });
     }
@@ -1988,19 +2009,40 @@ function getFilesRecursively(dir, files = []) {
 }
 
 function matchGlobPattern(relPath, pattern) {
-  let p = pattern.replace(/\\/g, '/');
-  let rel = relPath.replace(/\\/g, '/');
-  
-  // /**/ 패턴을 특수 토큰으로 보호하여 0개 이상의 폴더 매칭 지원 (Protecting /**/ patterns as special tokens to support matching zero or more folders)
-  p = p.replace(/\/\*\*\//g, '@@DOUBLE_STAR_SLASH@@');
-  p = p.replace(/\*\*/g, '.*');
-  p = p.replace(/\*/g, '[^/]*');
-  p = p.replace(/\./g, '\\.');
-  p = p.replace(/@@DOUBLE_STAR_SLASH@@/g, '/(?:.*/)?');
+  const patternSegments = pattern.replace(/\\/g, '/').split('/').filter(Boolean);
+  const relSegments = relPath.replace(/\\/g, '/').split('/').filter(Boolean);
+  const memo = new Map();
 
-  const regexStr = '^' + p + '$';
-  const regex = new RegExp(regexStr);
-  return regex.test(rel);
+  const segmentMatches = (segment, relSegment) => {
+    const escaped = segment
+      .replace(/[|\\{}()[\]^$+?.]/g, '\\$&')
+      .replace(/\*/g, '[^/]*');
+    return new RegExp(`^${escaped}$`).test(relSegment);
+  };
+
+  const matchFrom = (patternIdx, relIdx) => {
+    const key = `${patternIdx}:${relIdx}`;
+    if (memo.has(key)) return memo.get(key);
+    if (patternIdx === patternSegments.length) return relIdx === relSegments.length;
+
+    const segment = patternSegments[patternIdx];
+    let matched = false;
+    if (segment === '**') {
+      for (let nextRelIdx = relIdx; nextRelIdx <= relSegments.length; nextRelIdx++) {
+        if (matchFrom(patternIdx + 1, nextRelIdx)) {
+          matched = true;
+          break;
+        }
+      }
+    } else if (relIdx < relSegments.length && segmentMatches(segment, relSegments[relIdx])) {
+      matched = matchFrom(patternIdx + 1, relIdx + 1);
+    }
+
+    memo.set(key, matched);
+    return matched;
+  };
+
+  return matchFrom(0, 0);
 }
 
 // ─── main (Main Entry Point) ───
