@@ -2084,6 +2084,31 @@ function validateOutputDir(outDir, srcDir) {
   return resolvedOut;
 }
 
+function isInsideDir(parentDir, childPath) {
+  const rel = path.relative(parentDir, childPath);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+}
+
+function validateSourceFilePath(srcRoot, relPath) {
+  if (typeof relPath !== 'string' || relPath.trim() === '') {
+    throw new Error('sourceFiles entries must be non-empty strings');
+  }
+  if (path.isAbsolute(relPath)) {
+    throw new Error(`source file is outside srcDir: ${relPath}`);
+  }
+  const abs = path.resolve(srcRoot, relPath);
+  if (!isInsideDir(srcRoot, abs)) {
+    throw new Error(`source file is outside srcDir: ${relPath}`);
+  }
+  if (fs.existsSync(abs)) {
+    const realAbs = fs.realpathSync(abs);
+    if (!isInsideDir(srcRoot, realAbs)) {
+      throw new Error(`source file is outside srcDir: ${relPath}`);
+    }
+  }
+  return abs;
+}
+
 // ─── main (Main Entry Point) ───
 async function main() {
   console.log(`🔬 quarkify v1.0.0 — ${CONFIG.name} 시작...`);
@@ -2095,7 +2120,8 @@ async function main() {
     console.error('설정 파일(*.mjs)의 srcDir 경로를 본인의 실제 로컬 경로로 수정해 주세요.');
     process.exit(1);
   }
-  CONFIG.outDir = validateOutputDir(CONFIG.outDir, CONFIG.srcDir);
+  const srcRoot = fs.realpathSync(CONFIG.srcDir);
+  CONFIG.outDir = validateOutputDir(CONFIG.outDir, srcRoot);
 
   // Glob 파일 스캔 및 매핑 (Glob File Scan and Mapping)
   let resolvedFiles = [];
@@ -2107,12 +2133,16 @@ async function main() {
       const fileRel = path.relative(CONFIG.srcDir, fileAbs);
       const isMatched = CONFIG.sourceFiles.some(pat => matchGlobPattern(fileRel, pat));
       if (isMatched) {
+        validateSourceFilePath(srcRoot, fileRel);
         resolvedFiles.push(fileRel);
       }
     }
     console.log(`[+] 스캔 완료: 총 ${resolvedFiles.length}개 파일 매칭됨.\n`);
   } else {
-    resolvedFiles = CONFIG.sourceFiles;
+    resolvedFiles = CONFIG.sourceFiles.map((rel) => {
+      validateSourceFilePath(srcRoot, rel);
+      return rel;
+    });
   }
 
   if (resolvedFiles.length === 0) {
@@ -2125,7 +2155,7 @@ async function main() {
   engine.init();
 
   for (const rel of resolvedFiles) {
-    const abs = path.join(CONFIG.srcDir, rel);
+    const abs = validateSourceFilePath(srcRoot, rel);
     if (!fs.existsSync(abs)) { console.log(`[-] 건너뜀: ${rel}`); continue; }
     console.log(`[+] 분해 중: ${rel}`);
     engine.processFile(abs, rel);
