@@ -10,9 +10,8 @@
  * SOURCE_FILES / PERF_DATA / role classifier)를 외부 config 파일로 분리. (Preserving all decomposition logic from v3.1, while separating project-specific information (SRC_DIR / OUTPUT_DIR / SOURCE_FILES / PERF_DATA / role classifier) into external config files.)
  *
  * 사용법 (Usage):
- *   node quarkify_v7.mjs configs/sovereign_cuda.mjs
- *   node quarkify_v7.mjs configs/sovereign_metal.mjs
- *   node quarkify_v7.mjs configs/llama_cpp_cuda.mjs
+ *   node quarkify.mjs configs/project.json
+ *   node quarkify.mjs --allow-executable-config configs/trusted_project.mjs
  *
  * Config 인터페이스 (Config Interface) (configs/*.mjs):
  *   export default {
@@ -39,10 +38,11 @@ import { pathToFileURL } from 'url';
 import { execSync } from 'child_process';
 
 // ─── CLI / 컨피그 로드 (Load CLI / Config) ───
-const configPath = process.argv[2];
+const cli = parseCliArgs(process.argv.slice(2));
+const configPath = cli.configPath;
 if (!configPath) {
   console.error('❌ 에러: 설정 파일 경로가 제공되지 않았습니다.');
-  console.error('사용법: node quarkify.mjs <configs/config_name.mjs>');
+  console.error('사용법: node quarkify.mjs [--allow-executable-config] <configs/config_name.json|mjs>');
   process.exit(1);
 }
 if (!fs.existsSync(configPath)) {
@@ -57,27 +57,80 @@ if (!fs.existsSync(cfgAbs)) {
 
 let CONFIG;
 try {
-  const imported = await import(pathToFileURL(cfgAbs).href);
-  if (!imported || !imported.default) {
-    console.error(`❌ 에러: 설정 파일에 'default export'가 정의되어 있지 않습니다: "${configPath}"`);
-    process.exit(1);
-  }
-  CONFIG = imported.default;
+  CONFIG = validateConfig(await loadConfig(cfgAbs, cli.allowExecutableConfig));
 } catch (err) {
   console.error(`❌ 에러: 설정 파일을 불러오는 중 오류가 발생했습니다:`, err.message);
   process.exit(1);
 }
 
-// 필수 속성 검증 (Required Property Validation)
-const requiredFields = ['srcDir', 'outDir', 'sourceFiles'];
-for (const field of requiredFields) {
-  if (CONFIG[field] === undefined || CONFIG[field] === null) {
-    console.error(`❌ 에러: 설정 파일에 필수 속성 '${field}'이(가) 누락되었습니다.`);
+// ─── 유틸 (Utils) ───
+function parseCliArgs(args) {
+  let allowExecutableConfig = false;
+  const positional = [];
+  for (const arg of args) {
+    if (arg === '--allow-executable-config') {
+      allowExecutableConfig = true;
+    } else if (arg.startsWith('-')) {
+      console.error(`❌ 에러: 알 수 없는 옵션입니다: ${arg}`);
+      process.exit(1);
+    } else {
+      positional.push(arg);
+    }
+  }
+  if (positional.length > 1) {
+    console.error('❌ 에러: 설정 파일은 하나만 지정할 수 있습니다.');
     process.exit(1);
   }
+  return { configPath: positional[0], allowExecutableConfig };
 }
 
-// ─── 유틸 (Utils) ───
+async function loadConfig(absPath, allowExecutableConfig) {
+  const ext = path.extname(absPath).toLowerCase();
+  if (ext === '.json') {
+    const parsed = JSON.parse(fs.readFileSync(absPath, 'utf-8'));
+    return parsed;
+  }
+  if (['.mjs', '.js', '.cjs'].includes(ext)) {
+    if (!allowExecutableConfig) {
+      throw new Error(
+        'Executable JavaScript configs can run arbitrary local code. ' +
+        'Use a JSON config, or pass --allow-executable-config for trusted configs.'
+      );
+    }
+    const imported = await import(pathToFileURL(absPath).href);
+    if (!imported || !imported.default) {
+      throw new Error(`설정 파일에 'default export'가 정의되어 있지 않습니다: "${absPath}"`);
+    }
+    return imported.default;
+  }
+  throw new Error(`Unsupported config extension: ${ext || '(none)'}`);
+}
+
+function validateConfig(config) {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) {
+    throw new Error('Config must be an object.');
+  }
+  for (const field of ['srcDir', 'outDir']) {
+    if (typeof config[field] !== 'string' || config[field].trim() === '') {
+      throw new Error(`Config field '${field}' must be a non-empty string.`);
+    }
+  }
+  if (!Array.isArray(config.sourceFiles) || config.sourceFiles.length === 0 ||
+      config.sourceFiles.some((file) => typeof file !== 'string' || file.trim() === '')) {
+    throw new Error("Config field 'sourceFiles' must be an array of non-empty strings.");
+  }
+  if (config.perfData !== undefined && (!config.perfData || typeof config.perfData !== 'object' || Array.isArray(config.perfData))) {
+    throw new Error("Config field 'perfData' must be an object.");
+  }
+  if (config.roleRules !== undefined) {
+    if (!config.roleRules || typeof config.roleRules !== 'object' || Array.isArray(config.roleRules) ||
+        Object.entries(config.roleRules).some(([fragment, role]) => !fragment.trim() || typeof role !== 'string' || !role.trim())) {
+      throw new Error("Config field 'roleRules' must map non-empty name fragments to role strings.");
+    }
+  }
+  return config;
+}
+
 function safeName(name) {
   if (!name) return '_anonymous_';
   return name.replace(/[^a-zA-Z0-9_$.]/g, '_').substring(0, 100);
@@ -113,7 +166,10 @@ function perfBand(pct) {
   return '95_max';
 }
 
-const guessRole = CONFIG.guessRole || ((_) => 'general');
+const roleRules = Object.entries(CONFIG.roleRules || {}).map(([fragment, role]) => [fragment.trim().toLowerCase(), role.trim()]);
+const guessRole = typeof CONFIG.guessRole === 'function'
+  ? CONFIG.guessRole
+  : (name) => roleRules.find(([fragment]) => String(name).toLowerCase().includes(fragment))?.[1] || 'general';
 const OUTPUT_MARKER = '.quarkify-output';
 
 // ─── PTX arg 의미 분류 (PTX Argument Classification) ───
