@@ -1714,10 +1714,6 @@ class QuarkFolderEngine {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Quarkify v1.0.0 Topology Viewer - ${CONFIG.name}</title>
-    <!-- Tailwind CSS (CDN) -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- D3.js (CDN) -->
-    <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         body {
             background-color: #0b0f19;
@@ -1811,88 +1807,65 @@ class QuarkFolderEngine {
         const width = container.clientWidth;
         const height = container.clientHeight;
         
-        const svg = d3.select("#graph-container")
-            .append("svg")
-            .attr("width", "100%")
-            .attr("height", "100%")
-            .attr("viewBox", [0, 0, width, height])
-            .call(d3.zoom().on("zoom", (event) => {
-                g.attr("transform", event.transform);
-            }));
-            
-        const g = svg.append("g");
-        
-        const simulation = d3.forceSimulation(data.nodes)
-            .force("link", d3.forceLink(data.links).id(d => d.id).distance(45))
-            .force("charge", d3.forceManyBody().strength(-90))
-            .force("center", d3.forceCenter(width / 2, height / 2))
-            .force("collision", d3.forceCollide().radius(18));
-            
-        const link = g.append("g")
-            .selectAll("line")
-            .data(data.links)
-            .join("line")
-            .attr("class", "link");
-            
-        const node = g.append("g")
-            .selectAll("circle")
-            .data(data.nodes)
-            .join("circle")
-            .attr("r", d => d.val + 2)
-            .attr("class", d => "node color-" + (d.type || "default"))
-            .call(drag(simulation));
-            
-        const label = g.append("g")
-            .selectAll("text")
-            .data(data.nodes.filter(n => n.type === 'file' || n.type === 'class' || n.type === 'function' || n.type === 'annotation'))
-            .join("text")
-            .attr("dy", -10)
-            .attr("text-anchor", "middle")
-            .attr("fill", "#94a3b8")
-            .attr("font-size", "10px")
-            .text(d => d.label);
+        const svgNS = "http://www.w3.org/2000/svg";
+        const svg = document.createElementNS(svgNS, "svg");
+        svg.setAttribute("width", "100%");
+        svg.setAttribute("height", "100%");
+        svg.setAttribute("viewBox", [0, 0, width, height].join(" "));
+        container.appendChild(svg);
 
-        node.on("click", (event, d) => {
-            document.getElementById('node-name').innerText = d.label;
-            document.getElementById('node-type').innerText = "Type: " + d.type.toUpperCase() + " | ID: " + d.id;
-            node.transition().duration(200).attr("r", n => n.id === d.id ? n.val + 8 : n.val + 2);
+        const radius = Math.max(120, Math.min(width, height) * 0.36);
+        const centerX = width / 2;
+        const centerY = height / 2;
+        const positions = new Map();
+        data.nodes.forEach((node, index) => {
+            const angle = (Math.PI * 2 * index) / Math.max(data.nodes.length, 1);
+            positions.set(node.id, {
+                x: centerX + Math.cos(angle) * radius,
+                y: centerY + Math.sin(angle) * radius,
+            });
         });
-        
-        simulation.on("tick", () => {
-            link
-                .attr("x1", d => d.source.x)
-                .attr("y1", d => d.source.y)
-                .attr("x2", d => d.target.x)
-                .attr("y2", d => d.target.y);
 
-            node
-                .attr("cx", d => d.x)
-                .attr("cy", d => d.y);
-                
-            label
-                .attr("x", d => d.x)
-                .attr("y", d => d.y);
-        });
-        
-        function drag(simulation) {
-            function dragstarted(event) {
-                if (!event.active) simulation.alphaTarget(0.3).restart();
-                event.subject.fx = event.subject.x;
-                event.subject.fy = event.subject.y;
+        for (const link of data.links) {
+            const source = positions.get(typeof link.source === "string" ? link.source : link.source.id);
+            const target = positions.get(typeof link.target === "string" ? link.target : link.target.id);
+            if (!source || !target) continue;
+            const line = document.createElementNS(svgNS, "line");
+            line.setAttribute("x1", source.x);
+            line.setAttribute("y1", source.y);
+            line.setAttribute("x2", target.x);
+            line.setAttribute("y2", target.y);
+            line.setAttribute("class", "link");
+            svg.appendChild(line);
+        }
+
+        for (const node of data.nodes) {
+            const pos = positions.get(node.id);
+            const circle = document.createElementNS(svgNS, "circle");
+            circle.setAttribute("cx", pos.x);
+            circle.setAttribute("cy", pos.y);
+            circle.setAttribute("r", node.val + 2);
+            circle.setAttribute("class", "node color-" + (node.type || "default"));
+            circle.addEventListener("click", () => {
+                document.getElementById("node-name").innerText = node.label;
+                document.getElementById("node-type").innerText = "Type: " + node.type.toUpperCase() + " | ID: " + node.id;
+                for (const el of svg.querySelectorAll("circle")) {
+                    el.setAttribute("r", el === circle ? node.val + 8 : Number(el.dataset.baseRadius));
+                }
+            });
+            circle.dataset.baseRadius = String(node.val + 2);
+            svg.appendChild(circle);
+
+            if (["file", "class", "function", "annotation"].includes(node.type)) {
+                const label = document.createElementNS(svgNS, "text");
+                label.setAttribute("x", pos.x);
+                label.setAttribute("y", pos.y - 10);
+                label.setAttribute("text-anchor", "middle");
+                label.setAttribute("fill", "#94a3b8");
+                label.setAttribute("font-size", "10px");
+                label.textContent = node.label;
+                svg.appendChild(label);
             }
-            function dragged(event) {
-                event.subject.fx = event.x;
-                event.subject.fy = event.y;
-            }
-            function dragended(event) {
-                if (!event.active) simulation.alphaTarget(0);
-                event.subject.fx = null;
-                event.subject.fy = null;
-            }
-            return d3.drag()
-                .on("start", dragstarted)
-                .on("drag", dragged)
-                .on("end", dragended);
         }
     </script>
 </body>

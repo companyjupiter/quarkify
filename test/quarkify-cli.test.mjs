@@ -58,6 +58,32 @@ test('CLI materializes quark output, mirrors, axons, and guide artifacts', async
   });
 });
 
+test('generated HTML viewer does not load remote scripts by default', async () => {
+  await withTempWorkspace(async (tmp) => {
+    const srcDir = path.join(tmp, 'src');
+    const outDir = path.join(tmp, 'out');
+    const configPath = path.join(tmp, 'config.mjs');
+
+    await mkdir(srcDir, { recursive: true });
+    await writeFile(path.join(srcDir, 'sample.js'), 'export function sampleThing() { return 1; }\n', 'utf8');
+    await writeConfig(configPath, `{
+      name: 'offline-html-test',
+      srcDir: ${JSON.stringify(srcDir)},
+      outDir: ${JSON.stringify(outDir)},
+      sourceFiles: ['sample.js'],
+      perfData: {},
+      guessRole() { return 'general'; },
+    }`);
+
+    const result = runQuarkify(configPath);
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const html = await import('node:fs/promises').then(({ readFile }) => readFile(path.join(outDir, 'index.html'), 'utf8'));
+    assert.doesNotMatch(html, new RegExp(String.raw`<script\s+src=["']https?://`, 'i'));
+    assert.doesNotMatch(html, /cdn\.tailwindcss\.com|d3js\.org/i);
+  });
+});
+
 test('leading double-star globs match root and nested files', async () => {
   await withTempWorkspace(async (tmp) => {
     const srcDir = path.join(tmp, 'src');
