@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,6 +28,18 @@ function runQuarkify(configPath) {
     cwd: repoRoot,
     encoding: 'utf8',
   });
+}
+
+async function listRelativeEntries(dir, root = dir) {
+  const entries = [];
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const fullPath = path.join(dir, entry.name);
+    entries.push(path.relative(root, fullPath));
+    if (entry.isDirectory()) {
+      entries.push(...await listRelativeEntries(fullPath, root));
+    }
+  }
+  return entries;
 }
 
 test('CLI materializes quark output, mirrors, axons, and guide artifacts', async () => {
@@ -164,5 +176,52 @@ test('outDir must be empty or marked as Quarkify output', async () => {
 
     assert.notEqual(result.status, 0);
     assert.match(result.stderr || result.stdout, /not marked/i);
+  });
+});
+
+test('generated output redacts literals from fields, annotations, and returns', async () => {
+  await withTempWorkspace(async (tmp) => {
+    const srcDir = path.join(tmp, 'src');
+    const outDir = path.join(tmp, 'out');
+    const configPath = path.join(tmp, 'config.mjs');
+    const secrets = [
+      'fieldCanary493-tailField852',
+      'annotationCanary271-tailAnnotation964',
+      'returnCanary638-tailReturn417',
+    ];
+
+    await mkdir(srcDir, { recursive: true });
+    await writeFile(path.join(srcDir, 'Secrets.java'), `
+      @Credential(token = "${secrets[1]}")
+      class Secrets {
+        String password = "${secrets[0]}";
+        String reveal() {
+          return "${secrets[2]}";
+        }
+      }
+    `, 'utf8');
+    await writeConfig(configPath, `{
+      name: 'redaction-regression',
+      srcDir: ${JSON.stringify(srcDir)},
+      outDir: ${JSON.stringify(outDir)},
+      sourceFiles: ['Secrets.java'],
+      perfData: {},
+      guessRole() { return 'general'; },
+    }`);
+
+    const result = runQuarkify(configPath);
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const entries = (await listRelativeEntries(outDir)).join('\n');
+    const html = await readFile(path.join(outDir, 'index.html'), 'utf8');
+    for (const secret of secrets) {
+      for (const value of [secret, secret.replaceAll('-', '_'), ...secret.split('-')]) {
+        assert.ok(!entries.includes(value), `folder entries exposed ${value}`);
+        assert.ok(!html.includes(value), `HTML exposed ${value}`);
+      }
+    }
+    assert.match(entries, /annotation__Credential[/\\]arg__token___redacted_literal/);
+    assert.match(entries, /field__password[/\\]default__redacted_literal/);
+    assert.match(entries, /return[/\\]val__redacted_literal/);
   });
 });
