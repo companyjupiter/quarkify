@@ -60,13 +60,18 @@ test('CLI materializes quark output, mirrors, axons, and guide artifacts', async
     }`);
 
     const result = runQuarkify(configPath, ['--allow-executable-config']);
+    const indexPath = path.join(outDir, 'index.html');
+    const guidePath = path.join(outDir, 'ai_context_guide.txt');
 
     assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.ok(result.stdout.includes(indexPath), result.stdout);
+    assert.ok(result.stdout.includes(guidePath), result.stdout);
+    assert.doesNotMatch(result.stdout, /\$\{outPath\}/);
     assert.deepEqual(await readdir(path.join(outDir, 'quark')), ['file__sample.js']);
     assert.ok(existsSync(path.join(outDir, '_mirror', 'by_kind', 'fn')));
     assert.ok(existsSync(path.join(outDir, '_axon')));
-    assert.ok(existsSync(path.join(outDir, 'index.html')));
-    assert.ok(existsSync(path.join(outDir, 'ai_context_guide.txt')));
+    assert.ok(existsSync(indexPath));
+    assert.ok(existsSync(guidePath));
   });
 });
 

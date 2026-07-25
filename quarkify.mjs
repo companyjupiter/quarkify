@@ -1977,7 +1977,7 @@ class QuarkFolderEngine {
 </html>`;
     const outPath = path.join(this.outputDir, 'index.html');
     fs.writeFileSync(outPath, htmlContent, 'utf-8');
-    console.log(`[+] 인터랙티브 HTML 뷰어 빌드 완료: \${outPath}`);
+    console.log(`[+] 인터랙티브 HTML 뷰어 빌드 완료: ${outPath}`);
   }
 
   writeAiContextGuide() {
@@ -2030,7 +2030,7 @@ Hallucination을 방지하기 위해 다음 탐색 규칙을 반드시 준수하
 `;
     const outPath = path.join(this.outputDir, 'ai_context_guide.txt');
     fs.writeFileSync(outPath, text, 'utf-8');
-    console.log(`[+] AI 컨텍스트 가이드 지침서 작성 완료: \${outPath}`);
+    console.log(`[+] AI 컨텍스트 가이드 지침서 작성 완료: ${outPath}`);
   }
 }
 
