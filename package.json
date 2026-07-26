@@ -4,7 +4,7 @@
   "description": "> **\"Everything is a folder\" Philosophy — Local-First Static Analysis Engine & Source Code Topology Map Builder**",
   "main": "index.js",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test \"test/**/*.test.mjs\""
   },
   "engines": {
     "node": ">=22.12.0"
