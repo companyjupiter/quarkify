@@ -23,8 +23,8 @@ async function writeConfig(filePath, config) {
   await writeFile(filePath, `export default ${config};\n`, 'utf8');
 }
 
-function runQuarkify(configPath) {
-  return spawnSync(process.execPath, [cliPath, configPath], {
+function runQuarkify(configPath, extraArgs = []) {
+  return spawnSync(process.execPath, [cliPath, ...extraArgs, configPath], {
     cwd: repoRoot,
     encoding: 'utf8',
   });
@@ -59,7 +59,7 @@ test('CLI materializes quark output, mirrors, axons, and guide artifacts', async
       guessRole() { return 'general'; },
     }`);
 
-    const result = runQuarkify(configPath);
+    const result = runQuarkify(configPath, ['--allow-executable-config']);
 
     assert.equal(result.status, 0, result.stderr || result.stdout);
     assert.deepEqual(await readdir(path.join(outDir, 'quark')), ['file__sample.js']);
@@ -86,15 +86,88 @@ test('generated HTML viewer does not load remote scripts by default', async () =
       perfData: {},
       guessRole() { return 'general'; },
     }`);
-
-    const result = runQuarkify(configPath);
+    const result = runQuarkify(configPath, ['--allow-executable-config']);
 
     assert.equal(result.status, 0, result.stderr || result.stdout);
-    const html = await import('node:fs/promises').then(({ readFile }) => readFile(path.join(outDir, 'index.html'), 'utf8'));
+    const html = await readFile(path.join(outDir, 'index.html'), 'utf8');
     assert.doesNotMatch(html, new RegExp(String.raw`<script\s+src=["']https?://`, 'i'));
     assert.doesNotMatch(html, /cdn\.tailwindcss\.com|d3js\.org/i);
     assert.match(html, /class="sidebar glass-panel"/);
     assert.doesNotMatch(html, /class="[^"]*(?:w-screen|h-screen|grid-cols-2)[^"]*"/);
+  });
+});
+
+test('JSON config runs without executable config permission', async () => {
+  await withTempWorkspace(async (tmp) => {
+    const srcDir = path.join(tmp, 'src');
+    const outDir = path.join(tmp, 'out');
+    const configPath = path.join(tmp, 'config.json');
+
+    await mkdir(srcDir, { recursive: true });
+    await writeFile(path.join(srcDir, 'sample.js'), 'export function sampleThing() { return 1; }\n', 'utf8');
+    await writeFile(configPath, JSON.stringify({
+      name: 'json-config-test',
+      srcDir,
+      outDir,
+      sourceFiles: ['sample.js'],
+      perfData: {},
+      roleRules: { sample: 'json_rule' },
+    }), 'utf8');
+
+    const result = runQuarkify(configPath);
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.ok(existsSync(path.join(outDir, 'quark', 'file__sample.js')));
+    assert.ok(existsSync(path.join(outDir, '_mirror', 'by_role', 'json_rule')));
+  });
+});
+
+test('JSON config is validated before analysis starts', async () => {
+  await withTempWorkspace(async (tmp) => {
+    const outDir = path.join(tmp, 'out');
+    const configPath = path.join(tmp, 'config.json');
+
+    await writeFile(configPath, JSON.stringify({
+      srcDir: tmp,
+      outDir,
+      sourceFiles: 'sample.js',
+    }), 'utf8');
+
+    const result = runQuarkify(configPath);
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr || result.stdout, /sourceFiles.*array/i);
+    assert.ok(!existsSync(outDir));
+  });
+});
+
+test('executable config requires explicit permission flag', async () => {
+  await withTempWorkspace(async (tmp) => {
+    const srcDir = path.join(tmp, 'src');
+    const outDir = path.join(tmp, 'out');
+    const configPath = path.join(tmp, 'config.mjs');
+    const executionMarker = path.join(tmp, 'config-executed');
+
+    await mkdir(srcDir, { recursive: true });
+    await writeFile(path.join(srcDir, 'sample.js'), 'export function sampleThing() { return 1; }\n', 'utf8');
+    await writeFile(configPath, `
+      import { writeFileSync } from 'node:fs';
+      writeFileSync(${JSON.stringify(executionMarker)}, 'executed');
+      export default {
+        name: 'executable-config-gate',
+        srcDir: ${JSON.stringify(srcDir)},
+        outDir: ${JSON.stringify(outDir)},
+        sourceFiles: ['sample.js'],
+        perfData: {},
+        guessRole() { return 'general'; },
+      };
+    `, 'utf8');
+
+    const result = runQuarkify(configPath);
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr || result.stdout, /--allow-executable-config/);
+    assert.ok(!existsSync(executionMarker));
   });
 });
 
@@ -116,7 +189,7 @@ test('leading double-star globs match root and nested files', async () => {
       guessRole() { return 'general'; },
     }`);
 
-    const result = runQuarkify(configPath);
+    const result = runQuarkify(configPath, ['--allow-executable-config']);
 
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const fileFolders = await readdir(path.join(outDir, 'quark'));
@@ -147,7 +220,7 @@ test('segment globs support nested double-star and single-star patterns', async 
       guessRole() { return 'general'; },
     }`);
 
-    const result = runQuarkify(configPath);
+    const result = runQuarkify(configPath, ['--allow-executable-config']);
 
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const fileFolders = await readdir(path.join(outDir, 'quark'));
@@ -174,7 +247,7 @@ test('outDir cannot be the same directory as srcDir', async () => {
       guessRole() { return 'general'; },
     }`);
 
-    const result = runQuarkify(configPath);
+    const result = runQuarkify(configPath, ['--allow-executable-config']);
 
     assert.notEqual(result.status, 0);
     assert.match(result.stderr || result.stdout, /unsafe output directory/i);
@@ -200,7 +273,7 @@ test('outDir must be empty or marked as Quarkify output', async () => {
       guessRole() { return 'general'; },
     }`);
 
-    const result = runQuarkify(configPath);
+    const result = runQuarkify(configPath, ['--allow-executable-config']);
 
     assert.notEqual(result.status, 0);
     assert.match(result.stderr || result.stdout, /not marked/i);
@@ -237,7 +310,7 @@ test('generated output redacts literals from fields, annotations, and returns', 
       guessRole() { return 'general'; },
     }`);
 
-    const result = runQuarkify(configPath);
+    const result = runQuarkify(configPath, ['--allow-executable-config']);
 
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const entries = (await listRelativeEntries(outDir)).join('\n');

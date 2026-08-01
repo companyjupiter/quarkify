@@ -98,16 +98,16 @@ export async function analyze(projectRoot = process.cwd()) {
   }
 
   const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'quarkify-plugin-'));
-  const configPath = path.join(temporaryDirectory, 'config.mjs');
+  const configPath = path.join(temporaryDirectory, 'config.json');
   const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
   const cliPath = path.join(pluginRoot, 'quarkify.mjs');
-  const config = `export default ${JSON.stringify({
+  const config = JSON.stringify({
     name: safeProjectName(root),
     srcDir: root,
     outDir: outputDir,
     sourceFiles,
     perfData: {},
-  }, null, 2)};\n`;
+  }, null, 2);
 
   try {
     await writeFile(configPath, config, { encoding: 'utf8', mode: 0o600 });

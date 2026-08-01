@@ -130,7 +130,29 @@ The plugin discovers supported source files, skips common dependency and build d
 ### Run from the CLI
 
 ### 2. Create Configuration File
-Create a config file (`configs/*.mjs`) mapping source files and project-specific categorization.
+Prefer a data-only JSON config for shared or untrusted analysis settings.
+
+```json
+{
+  "name": "spring-demo-analysis",
+  "srcDir": "/path/to/spring-project",
+  "outDir": "/path/to/output_dir",
+  "sourceFiles": [
+    "src/main/java/**/*.java"
+  ],
+  "perfData": {},
+  "roleRules": {
+    "Controller": "web_endpoint",
+    "Repository": "data_access"
+  }
+}
+```
+
+`roleRules` assigns roles when a symbol name contains a key (case-insensitive).
+
+Executable JavaScript configs (`configs/*.mjs`) are still supported for trusted
+local workflows that need custom `guessRole` logic. They run arbitrary local
+code, so only use them from sources you trust.
 
 ```javascript
 // configs/spring_analysis.mjs
@@ -160,7 +182,13 @@ export default {
 Execute Quarkify with your config file as the argument:
 
 ```bash
-node quarkify.mjs configs/spring_analysis.mjs
+node quarkify.mjs configs/spring_analysis.json
+```
+
+For trusted executable configs, opt in explicitly:
+
+```bash
+node quarkify.mjs --allow-executable-config configs/spring_analysis.mjs
 ```
 
 ---

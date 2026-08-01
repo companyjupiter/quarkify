@@ -97,7 +97,29 @@ Quarkify는 대규모 상용 및 오픈소스 프로젝트에 적용하여 대�
 * [Node.js](https://nodejs.org/) v22.12.0 이상
 
 ### 2. 설정 파일(Config) 작성
-분석할 타겟 프로젝트 경로와 소스 파일들을 설정하는 Config 파일(`configs/*.mjs`)을 작성합니다.
+공유되거나 신뢰 여부가 불분명한 설정은 실행 코드가 없는 JSON config를 권장합니다.
+
+```json
+{
+  "name": "spring-demo-analysis",
+  "srcDir": "/path/to/spring-project",
+  "outDir": "/path/to/output_dir",
+  "sourceFiles": [
+    "src/main/java/**/*.java"
+  ],
+  "perfData": {},
+  "roleRules": {
+    "Controller": "web_endpoint",
+    "Repository": "data_access"
+  }
+}
+```
+
+`roleRules`는 심볼 이름에 키가 포함될 때 역할을 지정합니다(대소문자 무시).
+
+커스텀 `guessRole` 로직이 필요한 신뢰된 로컬 workflow에서는 실행 가능한
+JavaScript config(`configs/*.mjs`)도 사용할 수 있습니다. 이 파일은 로컬 코드를
+실행할 수 있으므로 신뢰하는 출처의 설정에만 사용하세요.
 
 ```javascript
 // configs/spring_analysis.mjs
@@ -125,7 +147,13 @@ export default {
 
 ### 3. 실행하기
 ```bash
-node quarkify.mjs configs/spring_analysis.mjs
+node quarkify.mjs configs/spring_analysis.json
+```
+
+신뢰된 실행형 config는 명시적으로 허용합니다.
+
+```bash
+node quarkify.mjs --allow-executable-config configs/spring_analysis.mjs
 ```
 
 ---
