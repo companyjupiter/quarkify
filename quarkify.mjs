@@ -1714,16 +1714,29 @@ class QuarkFolderEngine {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Quarkify v1.0.0 Topology Viewer - ${CONFIG.name}</title>
-    <!-- Tailwind CSS (CDN) -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- D3.js (CDN) -->
-    <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         body {
             background-color: #0b0f19;
             color: #e2e8f0;
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            height: 100vh;
+            margin: 0;
             overflow: hidden;
+            position: relative;
+        }
+        * { box-sizing: border-box; }
+        .sidebar {
+            border-radius: 1rem;
+            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.35);
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - 2rem);
+            justify-content: space-between;
+            margin: 1rem;
+            padding: 1.5rem;
+            position: relative;
+            width: 20rem;
+            z-index: 1;
         }
         .glass-panel {
             background: rgba(15, 23, 42, 0.65);
@@ -1731,6 +1744,23 @@ class QuarkFolderEngine {
             -webkit-backdrop-filter: blur(12px);
             border: 1px solid rgba(255, 255, 255, 0.08);
         }
+        .title { color: #c084fc; font-size: 1.25rem; font-weight: 700; margin: 0; }
+        .subtitle, .label { color: #64748b; font-size: 0.75rem; }
+        .subtitle { margin: 0.25rem 0 0; }
+        .divider { background: #334155; height: 1px; margin: 1rem 0; opacity: 0.7; }
+        .stats { display: grid; gap: 0.75rem; }
+        .label, .value { display: block; }
+        .value { color: #e2e8f0; font-size: 0.875rem; font-weight: 600; }
+        .value-indigo { color: #818cf8; }
+        .value-purple { color: #c084fc; }
+        .legend-title { color: #64748b; font-size: 0.75rem; margin: 0 0 0.5rem; text-transform: uppercase; }
+        .legend-grid { display: grid; font-size: 0.75rem; gap: 0.5rem; grid-template-columns: 1fr 1fr; }
+        .legend-item { align-items: center; color: #cbd5e1; display: flex; gap: 0.375rem; }
+        .legend-dot { border-radius: 50%; height: 0.625rem; width: 0.625rem; }
+        .details { background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(30, 41, 59, 0.6); border-radius: 0.75rem; padding: 0.75rem; }
+        .selected-name { color: #cbd5e1; display: block; font-size: 0.875rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .selected-type { color: #818cf8; display: block; font-size: 0.75rem; margin-top: 0.25rem; }
+        #graph-container { height: 100%; inset: 0; position: absolute; width: 100%; }
         .node:hover {
             cursor: pointer;
             filter: brightness(1.3);
@@ -1752,57 +1782,58 @@ class QuarkFolderEngine {
         .color-condition { fill: #06b6d4; }
         .color-catch { fill: #f97316; }
         .color-default { fill: #94a3b8; }
+        @media (max-width: 700px) {
+            .sidebar { height: auto; max-height: calc(100vh - 2rem); overflow: auto; width: calc(100% - 2rem); }
+        }
     </style>
 </head>
-<body class="w-screen h-screen flex relative">
+<body>
 
-    <div class="w-80 h-[92vh] glass-panel m-4 rounded-2xl p-6 flex flex-col z-10 shadow-2xl justify-between">
+    <aside class="sidebar glass-panel">
         <div>
-            <h1 class="text-xl font-bold tracking-tight bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
-                Quarkify v1.0.0 ⚛️
-            </h1>
-            <p class="text-xs text-slate-400 mt-1">Topology Graph Visualizer</p>
+            <h1 class="title">Quarkify v1.0.0 ⚛️</h1>
+            <p class="subtitle">Topology Graph Visualizer</p>
             
-            <div class="h-px bg-gradient-to-r from-transparent via-slate-700 to-transparent my-4"></div>
+            <div class="divider"></div>
             
-            <div class="space-y-3">
+            <div class="stats">
                 <div>
-                    <span class="text-xs text-slate-500 block">Project Name</span>
-                    <span class="text-sm font-semibold text-slate-200">${CONFIG.name}</span>
+                    <span class="label">Project Name</span>
+                    <span class="value">${CONFIG.name}</span>
                 </div>
                 <div>
-                    <span class="text-xs text-slate-500 block">Total Nodes</span>
-                    <span class="text-sm font-bold text-indigo-400">\${graphData.nodes.length}</span>
+                    <span class="label">Total Nodes</span>
+                    <span class="value value-indigo">\${graphData.nodes.length}</span>
                 </div>
                 <div>
-                    <span class="text-xs text-slate-500 block">Total Links</span>
-                    <span class="text-sm font-bold text-purple-400">\${graphData.links.length}</span>
+                    <span class="label">Total Links</span>
+                    <span class="value value-purple">\${graphData.links.length}</span>
                 </div>
             </div>
             
-            <div class="h-px bg-gradient-to-r from-transparent via-slate-700 to-transparent my-4"></div>
+            <div class="divider"></div>
             
-            <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Legend</h2>
-            <div class="grid grid-cols-2 gap-2 text-xs">
-                <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full color-file"></span> <span class="text-slate-300">File</span></div>
-                <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full color-class"></span> <span class="text-slate-300">Class</span></div>
-                <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full color-function"></span> <span class="text-slate-300">Method</span></div>
-                <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full color-annotation"></span> <span class="text-slate-300">Annotation</span></div>
-                <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full color-field"></span> <span class="text-slate-300">Field/Var</span></div>
-                <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full color-control_stmt"></span> <span class="text-slate-300">Control Stmt</span></div>
-                <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full color-api_call"></span> <span class="text-slate-300">API Call</span></div>
-                <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full color-condition"></span> <span class="text-slate-300">Condition</span></div>
+            <h2 class="legend-title">Legend</h2>
+            <div class="legend-grid">
+                <div class="legend-item"><span class="legend-dot color-file"></span>File</div>
+                <div class="legend-item"><span class="legend-dot color-class"></span>Class</div>
+                <div class="legend-item"><span class="legend-dot color-function"></span>Method</div>
+                <div class="legend-item"><span class="legend-dot color-annotation"></span>Annotation</div>
+                <div class="legend-item"><span class="legend-dot color-field"></span>Field/Var</div>
+                <div class="legend-item"><span class="legend-dot color-control_stmt"></span>Control Stmt</div>
+                <div class="legend-item"><span class="legend-dot color-api_call"></span>API Call</div>
+                <div class="legend-item"><span class="legend-dot color-condition"></span>Condition</div>
             </div>
         </div>
         
-        <div class="bg-slate-900/50 rounded-xl p-3 border border-slate-800/60" id="details">
-            <span class="text-xs text-slate-500 block">Selected Node</span>
-            <span class="text-sm font-semibold text-slate-300 block truncate" id="node-name">None (Click a node)</span>
-            <span class="text-xs text-indigo-400 block mt-1" id="node-type">-</span>
+        <div class="details" id="details">
+            <span class="label">Selected Node</span>
+            <span class="selected-name" id="node-name">None (Click a node)</span>
+            <span class="selected-type" id="node-type">-</span>
         </div>
-    </div>
+    </aside>
 
-    <div class="flex-1 h-full w-full absolute inset-0 z-0" id="graph-container"></div>
+    <div id="graph-container"></div>
 
     <script>
         const data = ${JSON.stringify(graphData)};
@@ -1811,88 +1842,65 @@ class QuarkFolderEngine {
         const width = container.clientWidth;
         const height = container.clientHeight;
         
-        const svg = d3.select("#graph-container")
-            .append("svg")
-            .attr("width", "100%")
-            .attr("height", "100%")
-            .attr("viewBox", [0, 0, width, height])
-            .call(d3.zoom().on("zoom", (event) => {
-                g.attr("transform", event.transform);
-            }));
-            
-        const g = svg.append("g");
-        
-        const simulation = d3.forceSimulation(data.nodes)
-            .force("link", d3.forceLink(data.links).id(d => d.id).distance(45))
-            .force("charge", d3.forceManyBody().strength(-90))
-            .force("center", d3.forceCenter(width / 2, height / 2))
-            .force("collision", d3.forceCollide().radius(18));
-            
-        const link = g.append("g")
-            .selectAll("line")
-            .data(data.links)
-            .join("line")
-            .attr("class", "link");
-            
-        const node = g.append("g")
-            .selectAll("circle")
-            .data(data.nodes)
-            .join("circle")
-            .attr("r", d => d.val + 2)
-            .attr("class", d => "node color-" + (d.type || "default"))
-            .call(drag(simulation));
-            
-        const label = g.append("g")
-            .selectAll("text")
-            .data(data.nodes.filter(n => n.type === 'file' || n.type === 'class' || n.type === 'function' || n.type === 'annotation'))
-            .join("text")
-            .attr("dy", -10)
-            .attr("text-anchor", "middle")
-            .attr("fill", "#94a3b8")
-            .attr("font-size", "10px")
-            .text(d => d.label);
+        const svgNS = "http://www.w3.org/2000/svg";
+        const svg = document.createElementNS(svgNS, "svg");
+        svg.setAttribute("width", "100%");
+        svg.setAttribute("height", "100%");
+        svg.setAttribute("viewBox", [0, 0, width, height].join(" "));
+        container.appendChild(svg);
 
-        node.on("click", (event, d) => {
-            document.getElementById('node-name').innerText = d.label;
-            document.getElementById('node-type').innerText = "Type: " + d.type.toUpperCase() + " | ID: " + d.id;
-            node.transition().duration(200).attr("r", n => n.id === d.id ? n.val + 8 : n.val + 2);
+        const radius = Math.max(120, Math.min(width, height) * 0.36);
+        const centerX = width / 2;
+        const centerY = height / 2;
+        const positions = new Map();
+        data.nodes.forEach((node, index) => {
+            const angle = (Math.PI * 2 * index) / Math.max(data.nodes.length, 1);
+            positions.set(node.id, {
+                x: centerX + Math.cos(angle) * radius,
+                y: centerY + Math.sin(angle) * radius,
+            });
         });
-        
-        simulation.on("tick", () => {
-            link
-                .attr("x1", d => d.source.x)
-                .attr("y1", d => d.source.y)
-                .attr("x2", d => d.target.x)
-                .attr("y2", d => d.target.y);
 
-            node
-                .attr("cx", d => d.x)
-                .attr("cy", d => d.y);
-                
-            label
-                .attr("x", d => d.x)
-                .attr("y", d => d.y);
-        });
-        
-        function drag(simulation) {
-            function dragstarted(event) {
-                if (!event.active) simulation.alphaTarget(0.3).restart();
-                event.subject.fx = event.subject.x;
-                event.subject.fy = event.subject.y;
+        for (const link of data.links) {
+            const source = positions.get(typeof link.source === "string" ? link.source : link.source.id);
+            const target = positions.get(typeof link.target === "string" ? link.target : link.target.id);
+            if (!source || !target) continue;
+            const line = document.createElementNS(svgNS, "line");
+            line.setAttribute("x1", source.x);
+            line.setAttribute("y1", source.y);
+            line.setAttribute("x2", target.x);
+            line.setAttribute("y2", target.y);
+            line.setAttribute("class", "link");
+            svg.appendChild(line);
+        }
+
+        for (const node of data.nodes) {
+            const pos = positions.get(node.id);
+            const circle = document.createElementNS(svgNS, "circle");
+            circle.setAttribute("cx", pos.x);
+            circle.setAttribute("cy", pos.y);
+            circle.setAttribute("r", node.val + 2);
+            circle.setAttribute("class", "node color-" + (node.type || "default"));
+            circle.addEventListener("click", () => {
+                document.getElementById("node-name").innerText = node.label;
+                document.getElementById("node-type").innerText = "Type: " + node.type.toUpperCase() + " | ID: " + node.id;
+                for (const el of svg.querySelectorAll("circle")) {
+                    el.setAttribute("r", el === circle ? node.val + 8 : Number(el.dataset.baseRadius));
+                }
+            });
+            circle.dataset.baseRadius = String(node.val + 2);
+            svg.appendChild(circle);
+
+            if (["file", "class", "function", "annotation"].includes(node.type)) {
+                const label = document.createElementNS(svgNS, "text");
+                label.setAttribute("x", pos.x);
+                label.setAttribute("y", pos.y - 10);
+                label.setAttribute("text-anchor", "middle");
+                label.setAttribute("fill", "#94a3b8");
+                label.setAttribute("font-size", "10px");
+                label.textContent = node.label;
+                svg.appendChild(label);
             }
-            function dragged(event) {
-                event.subject.fx = event.x;
-                event.subject.fy = event.y;
-            }
-            function dragended(event) {
-                if (!event.active) simulation.alphaTarget(0);
-                event.subject.fx = null;
-                event.subject.fy = null;
-            }
-            return d3.drag()
-                .on("start", dragstarted)
-                .on("drag", dragged)
-                .on("end", dragended);
         }
     </script>
 </body>
