@@ -1,0 +1,27 @@
+{
+  "name": "quarkify",
+  "version": "1.0.0",
+  "description": "Analyze local source repositories and build AI-ready topology maps with Quarkify.",
+  "author": {
+    "name": "teamjupiter",
+    "url": "https://github.com/companyjupiter"
+  },
+  "homepage": "https://github.com/companyjupiter/quarkify",
+  "repository": "https://github.com/companyjupiter/quarkify",
+  "license": "Apache-2.0",
+  "keywords": ["code-analysis", "repository-map", "static-analysis"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Quarkify",
+    "shortDescription": "Map and summarize local source repositories.",
+    "longDescription": "Run Quarkify without writing a configuration file, then summarize the generated source topology and link to its local HTML viewer.",
+    "developerName": "teamjupiter",
+    "category": "Developer Tools",
+    "capabilities": [],
+    "websiteURL": "https://github.com/companyjupiter/quarkify",
+    "defaultPrompt": [
+      "Analyze this repository with Quarkify.",
+      "Map this codebase and summarize its structure."
+    ]
+  }
+}

@@ -3,19 +3,27 @@ name: CI
 on:
   pull_request:
     paths:
+      - ".agents/plugins/**"
+      - ".claude-plugin/**"
+      - ".codex-plugin/**"
       - ".github/workflows/ci.yml"
       - "package.json"
       - "package-lock.json"
       - "quarkify.mjs"
+      - "skills/**"
       - "test/**"
   push:
     branches:
       - main
     paths:
+      - ".agents/plugins/**"
+      - ".claude-plugin/**"
+      - ".codex-plugin/**"
       - ".github/workflows/ci.yml"
       - "package.json"
       - "package-lock.json"
       - "quarkify.mjs"
+      - "skills/**"
       - "test/**"
 
 permissions:
@@ -51,4 +59,6 @@ jobs:
         run: npm test
 
       - name: Check CLI syntax
-        run: node --check quarkify.mjs
+        run: |
+          node --check quarkify.mjs
+          node --check skills/analyze/scripts/analyze.mjs
