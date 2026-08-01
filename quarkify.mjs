@@ -1719,7 +1719,24 @@ class QuarkFolderEngine {
             background-color: #0b0f19;
             color: #e2e8f0;
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            height: 100vh;
+            margin: 0;
             overflow: hidden;
+            position: relative;
+        }
+        * { box-sizing: border-box; }
+        .sidebar {
+            border-radius: 1rem;
+            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.35);
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - 2rem);
+            justify-content: space-between;
+            margin: 1rem;
+            padding: 1.5rem;
+            position: relative;
+            width: 20rem;
+            z-index: 1;
         }
         .glass-panel {
             background: rgba(15, 23, 42, 0.65);
@@ -1727,6 +1744,23 @@ class QuarkFolderEngine {
             -webkit-backdrop-filter: blur(12px);
             border: 1px solid rgba(255, 255, 255, 0.08);
         }
+        .title { color: #c084fc; font-size: 1.25rem; font-weight: 700; margin: 0; }
+        .subtitle, .label { color: #64748b; font-size: 0.75rem; }
+        .subtitle { margin: 0.25rem 0 0; }
+        .divider { background: #334155; height: 1px; margin: 1rem 0; opacity: 0.7; }
+        .stats { display: grid; gap: 0.75rem; }
+        .label, .value { display: block; }
+        .value { color: #e2e8f0; font-size: 0.875rem; font-weight: 600; }
+        .value-indigo { color: #818cf8; }
+        .value-purple { color: #c084fc; }
+        .legend-title { color: #64748b; font-size: 0.75rem; margin: 0 0 0.5rem; text-transform: uppercase; }
+        .legend-grid { display: grid; font-size: 0.75rem; gap: 0.5rem; grid-template-columns: 1fr 1fr; }
+        .legend-item { align-items: center; color: #cbd5e1; display: flex; gap: 0.375rem; }
+        .legend-dot { border-radius: 50%; height: 0.625rem; width: 0.625rem; }
+        .details { background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(30, 41, 59, 0.6); border-radius: 0.75rem; padding: 0.75rem; }
+        .selected-name { color: #cbd5e1; display: block; font-size: 0.875rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .selected-type { color: #818cf8; display: block; font-size: 0.75rem; margin-top: 0.25rem; }
+        #graph-container { height: 100%; inset: 0; position: absolute; width: 100%; }
         .node:hover {
             cursor: pointer;
             filter: brightness(1.3);
@@ -1748,57 +1782,58 @@ class QuarkFolderEngine {
         .color-condition { fill: #06b6d4; }
         .color-catch { fill: #f97316; }
         .color-default { fill: #94a3b8; }
+        @media (max-width: 700px) {
+            .sidebar { height: auto; max-height: calc(100vh - 2rem); overflow: auto; width: calc(100% - 2rem); }
+        }
     </style>
 </head>
-<body class="w-screen h-screen flex relative">
+<body>
 
-    <div class="w-80 h-[92vh] glass-panel m-4 rounded-2xl p-6 flex flex-col z-10 shadow-2xl justify-between">
+    <aside class="sidebar glass-panel">
         <div>
-            <h1 class="text-xl font-bold tracking-tight bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
-                Quarkify v1.0.0 ⚛️
-            </h1>
-            <p class="text-xs text-slate-400 mt-1">Topology Graph Visualizer</p>
+            <h1 class="title">Quarkify v1.0.0 ⚛️</h1>
+            <p class="subtitle">Topology Graph Visualizer</p>
             
-            <div class="h-px bg-gradient-to-r from-transparent via-slate-700 to-transparent my-4"></div>
+            <div class="divider"></div>
             
-            <div class="space-y-3">
+            <div class="stats">
                 <div>
-                    <span class="text-xs text-slate-500 block">Project Name</span>
-                    <span class="text-sm font-semibold text-slate-200">${CONFIG.name}</span>
+                    <span class="label">Project Name</span>
+                    <span class="value">${CONFIG.name}</span>
                 </div>
                 <div>
-                    <span class="text-xs text-slate-500 block">Total Nodes</span>
-                    <span class="text-sm font-bold text-indigo-400">\${graphData.nodes.length}</span>
+                    <span class="label">Total Nodes</span>
+                    <span class="value value-indigo">\${graphData.nodes.length}</span>
                 </div>
                 <div>
-                    <span class="text-xs text-slate-500 block">Total Links</span>
-                    <span class="text-sm font-bold text-purple-400">\${graphData.links.length}</span>
+                    <span class="label">Total Links</span>
+                    <span class="value value-purple">\${graphData.links.length}</span>
                 </div>
             </div>
             
-            <div class="h-px bg-gradient-to-r from-transparent via-slate-700 to-transparent my-4"></div>
+            <div class="divider"></div>
             
-            <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Legend</h2>
-            <div class="grid grid-cols-2 gap-2 text-xs">
-                <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full color-file"></span> <span class="text-slate-300">File</span></div>
-                <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full color-class"></span> <span class="text-slate-300">Class</span></div>
-                <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full color-function"></span> <span class="text-slate-300">Method</span></div>
-                <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full color-annotation"></span> <span class="text-slate-300">Annotation</span></div>
-                <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full color-field"></span> <span class="text-slate-300">Field/Var</span></div>
-                <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full color-control_stmt"></span> <span class="text-slate-300">Control Stmt</span></div>
-                <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full color-api_call"></span> <span class="text-slate-300">API Call</span></div>
-                <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full color-condition"></span> <span class="text-slate-300">Condition</span></div>
+            <h2 class="legend-title">Legend</h2>
+            <div class="legend-grid">
+                <div class="legend-item"><span class="legend-dot color-file"></span>File</div>
+                <div class="legend-item"><span class="legend-dot color-class"></span>Class</div>
+                <div class="legend-item"><span class="legend-dot color-function"></span>Method</div>
+                <div class="legend-item"><span class="legend-dot color-annotation"></span>Annotation</div>
+                <div class="legend-item"><span class="legend-dot color-field"></span>Field/Var</div>
+                <div class="legend-item"><span class="legend-dot color-control_stmt"></span>Control Stmt</div>
+                <div class="legend-item"><span class="legend-dot color-api_call"></span>API Call</div>
+                <div class="legend-item"><span class="legend-dot color-condition"></span>Condition</div>
             </div>
         </div>
         
-        <div class="bg-slate-900/50 rounded-xl p-3 border border-slate-800/60" id="details">
-            <span class="text-xs text-slate-500 block">Selected Node</span>
-            <span class="text-sm font-semibold text-slate-300 block truncate" id="node-name">None (Click a node)</span>
-            <span class="text-xs text-indigo-400 block mt-1" id="node-type">-</span>
+        <div class="details" id="details">
+            <span class="label">Selected Node</span>
+            <span class="selected-name" id="node-name">None (Click a node)</span>
+            <span class="selected-type" id="node-type">-</span>
         </div>
-    </div>
+    </aside>
 
-    <div class="flex-1 h-full w-full absolute inset-0 z-0" id="graph-container"></div>
+    <div id="graph-container"></div>
 
     <script>
         const data = ${JSON.stringify(graphData)};

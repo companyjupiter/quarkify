@@ -81,6 +81,8 @@ test('generated HTML viewer does not load remote scripts by default', async () =
     const html = await import('node:fs/promises').then(({ readFile }) => readFile(path.join(outDir, 'index.html'), 'utf8'));
     assert.doesNotMatch(html, new RegExp(String.raw`<script\s+src=["']https?://`, 'i'));
     assert.doesNotMatch(html, /cdn\.tailwindcss\.com|d3js\.org/i);
+    assert.match(html, /class="sidebar glass-panel"/);
+    assert.doesNotMatch(html, /class="[^"]*(?:w-screen|h-screen|grid-cols-2)[^"]*"/);
   });
 });
 
