@@ -1,0 +1,17 @@
+{
+  "name": "quarkify",
+  "owner": {
+    "name": "teamjupiter"
+  },
+  "plugins": [
+    {
+      "name": "quarkify",
+      "source": "./",
+      "description": "Analyze local source repositories and build AI-ready topology maps.",
+      "version": "1.0.0",
+      "author": {
+        "name": "teamjupiter"
+      }
+    }
+  ]
+}

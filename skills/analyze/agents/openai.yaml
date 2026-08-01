@@ -1,0 +1,4 @@
+interface:
+  display_name: "Analyze with Quarkify"
+  short_description: "Analyze codebases with Quarkify locally"
+  default_prompt: "Use $analyze to map and summarize this codebase with Quarkify."

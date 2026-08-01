@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "quarkify",
+  "displayName": "Quarkify",
+  "version": "1.0.0",
+  "description": "Analyze local source repositories and build AI-ready topology maps with Quarkify.",
+  "author": {
+    "name": "teamjupiter",
+    "url": "https://github.com/companyjupiter"
+  },
+  "homepage": "https://github.com/companyjupiter/quarkify",
+  "repository": "https://github.com/companyjupiter/quarkify",
+  "license": "Apache-2.0",
+  "keywords": ["code-analysis", "repository-map", "static-analysis"],
+  "skills": "./skills/"
+}

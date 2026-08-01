@@ -96,6 +96,39 @@ Once analysis completes, Quarkify physically creates three core folders, a D3 vi
 ### 1. Requirements
 * [Node.js](https://nodejs.org/) v22.12.0 or higher
 
+### Use from Codex
+
+Install the repository marketplace and plugin:
+
+```bash
+codex plugin marketplace add companyjupiter/quarkify
+codex plugin add quarkify@quarkify
+```
+
+Start a new Codex session, then ask:
+
+```text
+Analyze this repository with Quarkify and summarize its structure.
+```
+
+Invoke the skill explicitly with `$quarkify:analyze` when needed.
+
+### Use from Claude Code
+
+Run these commands inside Claude Code:
+
+```text
+/plugin marketplace add companyjupiter/quarkify
+/plugin install quarkify@quarkify
+/reload-plugins
+```
+
+Then ask the same natural-language request, or invoke `/quarkify:analyze` explicitly.
+
+The plugin discovers supported source files, skips common dependency and build directories, and writes the result to `.quarkify/output`. Open `.quarkify/output/index.html` for the visual map. No configuration file is required.
+
+### Run from the CLI
+
 ### 2. Create Configuration File
 Create a config file (`configs/*.mjs`) mapping source files and project-specific categorization.
 
