@@ -344,7 +344,7 @@ test('explicit sourceFiles cannot escape srcDir with traversal segments', async 
       guessRole() { return 'general'; },
     }`);
 
-    const result = runQuarkify(configPath);
+    const result = runQuarkify(configPath, ['--allow-executable-config']);
 
     assert.notEqual(result.status, 0);
     assert.match(result.stderr || result.stdout, /outside srcDir/i);
@@ -369,7 +369,7 @@ test('explicit sourceFiles cannot use absolute paths', async () => {
       guessRole() { return 'general'; },
     }`);
 
-    const result = runQuarkify(configPath);
+    const result = runQuarkify(configPath, ['--allow-executable-config']);
 
     assert.notEqual(result.status, 0);
     assert.match(result.stderr || result.stdout, /outside srcDir/i);
@@ -404,7 +404,7 @@ test('explicit sourceFiles cannot escape srcDir through a symlink', async (t) =>
       guessRole() { return 'general'; },
     }`);
 
-    const result = runQuarkify(configPath);
+    const result = runQuarkify(configPath, ['--allow-executable-config']);
 
     assert.notEqual(result.status, 0);
     assert.match(result.stderr || result.stdout, /outside srcDir/i);

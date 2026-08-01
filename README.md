@@ -105,7 +105,13 @@ codex plugin marketplace add companyjupiter/quarkify
 codex plugin add quarkify@quarkify
 ```
 
-Start a new Codex session, then ask:
+After new changes are merged, refresh the installed plugin with:
+
+```bash
+codex plugin marketplace upgrade quarkify
+```
+
+After installing or upgrading, restart Codex and start a new session so the skill is loaded. Then ask:
 
 ```text
 Analyze this repository with Quarkify and summarize its structure.
