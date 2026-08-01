@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -251,5 +251,89 @@ test('generated output redacts literals from fields, annotations, and returns', 
     assert.match(entries, /annotation__Credential[/\\]arg__token___redacted_literal/);
     assert.match(entries, /field__password[/\\]default__redacted_literal/);
     assert.match(entries, /return[/\\]val__redacted_literal/);
+  });
+});
+
+test('explicit sourceFiles cannot escape srcDir with traversal segments', async () => {
+  await withTempWorkspace(async (tmp) => {
+    const srcDir = path.join(tmp, 'src');
+    const outDir = path.join(tmp, 'out');
+    const configPath = path.join(tmp, 'config.mjs');
+
+    await mkdir(srcDir, { recursive: true });
+    await writeFile(path.join(tmp, 'outside.js'), 'export const leaked = true;\n', 'utf8');
+    await writeConfig(configPath, `{
+      name: 'source-containment-regression',
+      srcDir: ${JSON.stringify(srcDir)},
+      outDir: ${JSON.stringify(outDir)},
+      sourceFiles: ['../outside.js'],
+      perfData: {},
+      guessRole() { return 'general'; },
+    }`);
+
+    const result = runQuarkify(configPath);
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr || result.stdout, /outside srcDir/i);
+  });
+});
+
+test('explicit sourceFiles cannot use absolute paths', async () => {
+  await withTempWorkspace(async (tmp) => {
+    const srcDir = path.join(tmp, 'src');
+    const outDir = path.join(tmp, 'out');
+    const outsidePath = path.join(tmp, 'outside.js');
+    const configPath = path.join(tmp, 'config.mjs');
+
+    await mkdir(srcDir, { recursive: true });
+    await writeFile(outsidePath, 'export const leaked = true;\n', 'utf8');
+    await writeConfig(configPath, `{
+      name: 'absolute-source-containment-regression',
+      srcDir: ${JSON.stringify(srcDir)},
+      outDir: ${JSON.stringify(outDir)},
+      sourceFiles: [${JSON.stringify(outsidePath)}],
+      perfData: {},
+      guessRole() { return 'general'; },
+    }`);
+
+    const result = runQuarkify(configPath);
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr || result.stdout, /outside srcDir/i);
+  });
+});
+
+test('explicit sourceFiles cannot escape srcDir through a symlink', async (t) => {
+  await withTempWorkspace(async (tmp) => {
+    const srcDir = path.join(tmp, 'src');
+    const outDir = path.join(tmp, 'out');
+    const outsidePath = path.join(tmp, 'outside.js');
+    const linkPath = path.join(srcDir, 'linked.js');
+    const configPath = path.join(tmp, 'config.mjs');
+
+    await mkdir(srcDir, { recursive: true });
+    await writeFile(outsidePath, 'export const leaked = true;\n', 'utf8');
+    try {
+      await symlink(outsidePath, linkPath, 'file');
+    } catch (error) {
+      if (error.code === 'EPERM' || error.code === 'EACCES') {
+        t.skip(`symlink creation is unavailable: ${error.code}`);
+        return;
+      }
+      throw error;
+    }
+    await writeConfig(configPath, `{
+      name: 'symlink-source-containment-regression',
+      srcDir: ${JSON.stringify(srcDir)},
+      outDir: ${JSON.stringify(outDir)},
+      sourceFiles: ['linked.js'],
+      perfData: {},
+      guessRole() { return 'general'; },
+    }`);
+
+    const result = runQuarkify(configPath);
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr || result.stdout, /outside srcDir/i);
   });
 });
