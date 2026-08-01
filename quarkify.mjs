@@ -82,6 +82,24 @@ function safeName(name) {
   if (!name) return '_anonymous_';
   return name.replace(/[^a-zA-Z0-9_$.]/g, '_').substring(0, 100);
 }
+function safeLiteralName(value, key = '') {
+  if (shouldRedactLiteral(value, key)) return 'redacted_literal';
+  return safeName(value);
+}
+function shouldRedactLiteral(value, key = '') {
+  const raw = String(value || '').trim();
+  const keyText = String(key || '');
+  const combined = `${keyText} ${raw}`;
+  if (/['"`]/.test(raw)) return true;
+  if (/(api[_-]?key|auth(orization)?|credential|passwd|password|secret|token)/i.test(combined)) {
+    return true;
+  }
+  if (/-----BEGIN [A-Z ]*PRIVATE KEY-----/i.test(raw)) return true;
+  if (/^[A-Za-z0-9+/=_-]{32,}$/.test(raw.replace(/^['"`]|['"`]$/g, ''))) return true;
+  if (/['"`][^'"`]{80,}['"`]/.test(raw)) return true;
+  if (/https?:\/\/[^/\s:@]+:[^/\s@]+@/i.test(raw)) return true;
+  return false;
+}
 function mkdirSync(d) { fs.mkdirSync(d, { recursive: true }); }
 function ensureDir(d) { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); }
 function perfBand(pct) {
@@ -536,7 +554,7 @@ function emitStmtNode(stmt, parentPath, idx) {
   ensureDir(dir);
 
   if (stmt.kind === 'if') {
-    const condTag = `cond___${safeName(stmt.cond).substring(0, 32)}`;
+    const condTag = `cond___${safeLiteralName(stmt.cond).substring(0, 32)}`;
     const condDir = path.join(dir, condTag);
     ensureDir(condDir);
     if (stmt.capture) mkdirSync(path.join(condDir, `capture__${safeName(stmt.capture).substring(0, 24)}`));
@@ -547,7 +565,7 @@ function emitStmtNode(stmt, parentPath, idx) {
     const branches = stmt.elseBranches || [];
     for (let bi = 0; bi < branches.length; bi++) {
       const br = branches[bi];
-      const tag = br.cond === null ? 'else' : `elif_${bi}__cond___${safeName(br.cond).substring(0, 28)}`;
+      const tag = br.cond === null ? 'else' : `elif_${bi}__cond___${safeLiteralName(br.cond).substring(0, 28)}`;
       const brDir = path.join(dir, tag);
       ensureDir(brDir);
       if (br.capture) mkdirSync(path.join(brDir, `capture__${safeName(br.capture).substring(0, 24)}`));
@@ -557,17 +575,17 @@ function emitStmtNode(stmt, parentPath, idx) {
     return;
   }
   if (stmt.kind === 'while') {
-    const sigDir = path.join(dir, `cond___${safeName(stmt.cond).substring(0, 60)}`);
+    const sigDir = path.join(dir, `cond___${safeLiteralName(stmt.cond).substring(0, 60)}`);
     ensureDir(sigDir);
     if (stmt.capture) mkdirSync(path.join(sigDir, `capture__${safeName(stmt.capture).substring(0, 40)}`));
-    if (stmt.contExpr) mkdirSync(path.join(sigDir, `cont__${safeName(stmt.contExpr).substring(0, 40)}`));
+    if (stmt.contExpr) mkdirSync(path.join(sigDir, `cont__${safeLiteralName(stmt.contExpr).substring(0, 40)}`));
     const bodyDir = path.join(dir, 'body');
     ensureDir(bodyDir);
     emitStmtList(stmt.body || [], bodyDir);
     return;
   }
   if (stmt.kind === 'for') {
-    const sigDir = path.join(dir, `range___${safeName(stmt.range).substring(0, 60)}`);
+    const sigDir = path.join(dir, `range___${safeLiteralName(stmt.range).substring(0, 60)}`);
     ensureDir(sigDir);
     if (stmt.capture) mkdirSync(path.join(sigDir, `capture__${safeName(stmt.capture).substring(0, 40)}`));
     const bodyDir = path.join(dir, 'body');
@@ -576,7 +594,7 @@ function emitStmtNode(stmt, parentPath, idx) {
     return;
   }
   if (stmt.kind === 'switch') {
-    const sigDir = path.join(dir, `expr___${safeName(stmt.expr).substring(0, 60)}`);
+    const sigDir = path.join(dir, `expr___${safeLiteralName(stmt.expr).substring(0, 60)}`);
     ensureDir(sigDir);
     const bodyDir = path.join(dir, 'body');
     ensureDir(bodyDir);
@@ -585,14 +603,14 @@ function emitStmtNode(stmt, parentPath, idx) {
   }
   if (stmt.kind === 'return') {
     if (stmt.val) {
-      mkdirSync(path.join(dir, `val__${safeName(stmt.val).substring(0, 60)}`));
+      mkdirSync(path.join(dir, `val__${safeLiteralName(stmt.val).substring(0, 60)}`));
       annotateGeneric(stmt.val, dir);
     }
     return;
   }
   if (stmt.kind === 'try') {
     if (stmt.resource) {
-      mkdirSync(path.join(dir, `resource___${safeName(stmt.resource).substring(0, 40)}`));
+      mkdirSync(path.join(dir, `resource___${safeLiteralName(stmt.resource).substring(0, 40)}`));
     }
     const tryBodyDir = path.join(dir, 'body');
     ensureDir(tryBodyDir);
@@ -600,7 +618,7 @@ function emitStmtNode(stmt, parentPath, idx) {
 
     for (let ci = 0; ci < stmt.catches.length; ci++) {
       const c = stmt.catches[ci];
-      const catchDir = path.join(dir, `catch___${safeName(c.sig).substring(0, 40)}`);
+      const catchDir = path.join(dir, `catch___${safeLiteralName(c.sig).substring(0, 40)}`);
       ensureDir(catchDir);
       emitStmtList(c.body || [], catchDir);
     }
@@ -772,11 +790,9 @@ function emitPythonNode(node, parentPath, idx) {
           if (!p) continue;
           if (p.includes('=')) {
             const [k, v] = p.split('=').map(s => s.trim());
-            const cleanV = v.replace(/["']/g, '');
-            mkdirSync(path.join(decDir, `arg__${safeName(k)}___${safeName(cleanV).substring(0, 40)}`));
+            mkdirSync(path.join(decDir, `arg__${safeName(k)}___${safeLiteralName(v, k).substring(0, 40)}`));
           } else {
-            const cleanV = p.replace(/["']/g, '');
-            mkdirSync(path.join(decDir, `arg__${ai}___${safeName(cleanV).substring(0, 40)}`));
+            mkdirSync(path.join(decDir, `arg__${ai}___${safeLiteralName(p).substring(0, 40)}`));
           }
         }
       }
@@ -846,8 +862,8 @@ function annotateGeneric(text, dir) {
       ensureDir(exprDir);
       const opDir = path.join(exprDir, `bin_op__${decomp.op}`);
       ensureDir(opDir);
-      if (decomp.lhs) mkdirSync(path.join(opDir, `lhs__${safeName(decomp.lhs).substring(0, 40)}`));
-      if (decomp.rhs) mkdirSync(path.join(opDir, `rhs__${safeName(decomp.rhs).substring(0, 40)}`));
+      if (decomp.lhs) mkdirSync(path.join(opDir, `lhs__${safeLiteralName(decomp.lhs).substring(0, 40)}`));
+      if (decomp.rhs) mkdirSync(path.join(opDir, `rhs__${safeLiteralName(decomp.rhs).substring(0, 40)}`));
     }
   }
 }
@@ -958,11 +974,9 @@ class QuarkFolderEngine {
               if (!p) continue;
               if (p.includes('=')) {
                 const [k, v] = p.split('=').map(s => s.trim());
-                const cleanV = v.replace(/["']/g, '');
-                mkdirSync(path.join(annDir, `arg__${safeName(k)}___${safeName(cleanV).substring(0, 40)}`));
+                mkdirSync(path.join(annDir, `arg__${safeName(k)}___${safeLiteralName(v, k).substring(0, 40)}`));
               } else {
-                const cleanV = p.replace(/["']/g, '');
-                mkdirSync(path.join(annDir, `arg__${ai}___${safeName(cleanV).substring(0, 40)}`));
+                mkdirSync(path.join(annDir, `arg__${ai}___${safeLiteralName(p).substring(0, 40)}`));
               }
             }
           }
@@ -987,7 +1001,7 @@ class QuarkFolderEngine {
             const fDir = path.join(symQuarkPath, `field__${safeName(f.name)}`);
             mkdirSync(fDir);
             if (f.type) mkdirSync(path.join(fDir, `type__${safeName(f.type).substring(0, 60)}`));
-            if (f.default) mkdirSync(path.join(fDir, `default__${safeName(f.default).substring(0, 60)}`));
+            if (f.default) mkdirSync(path.join(fDir, `default__${safeLiteralName(f.default, f.name).substring(0, 60)}`));
             else mkdirSync(path.join(fDir, `default__missing__uninit_hazard`));
           }
           // RECURSE into the container body
@@ -1125,13 +1139,13 @@ class QuarkFolderEngine {
       if (stmt.startsWith('if ') || stmt.startsWith('if(')) {
         stmtName = 'if';
         const condMatch = stmt.match(/if\s*\(([\s\S]*)\)/);
-        if (condMatch) children.push(`cond___${safeName(condMatch[1]).substring(0, 40)}`);
+        if (condMatch) children.push(`cond___${safeLiteralName(condMatch[1]).substring(0, 40)}`);
       } else if (stmt.startsWith('while ') || stmt.startsWith('while(')) stmtName = 'while';
       else if (stmt.startsWith('for ') || stmt.startsWith('for(')) stmtName = 'for';
       else if (stmt.startsWith('return ') || stmt === 'return') {
         stmtName = 'return';
         const retVal = stmt.replace('return', '').trim();
-        if (retVal) children.push(`val__${safeName(retVal).substring(0, 40)}`);
+        if (retVal) children.push(`val__${safeLiteralName(retVal).substring(0, 40)}`);
       } else if (stmt.startsWith('switch ') || stmt.startsWith('switch(')) stmtName = 'switch';
       else if (stmt.startsWith('asm')) {
         stmtName = `asm_${stmtIndex++}`;
@@ -1169,8 +1183,8 @@ class QuarkFolderEngine {
           ensureDir(exprDir);
           const opDir = path.join(exprDir, `bin_op__${decomp.op}`);
           ensureDir(opDir);
-          if (decomp.lhs) mkdirSync(path.join(opDir, `lhs__${safeName(decomp.lhs).substring(0, 40)}`));
-          if (decomp.rhs) mkdirSync(path.join(opDir, `rhs__${safeName(decomp.rhs).substring(0, 40)}`));
+          if (decomp.lhs) mkdirSync(path.join(opDir, `lhs__${safeLiteralName(decomp.lhs).substring(0, 40)}`));
+          if (decomp.rhs) mkdirSync(path.join(opDir, `rhs__${safeLiteralName(decomp.rhs).substring(0, 40)}`));
         }
       }
     }
@@ -1326,7 +1340,7 @@ class QuarkFolderEngine {
           mkdirSync(fDir);
           mkdirSync(path.join(fDir, `type__${safeName(m[1].trim()).substring(0, 40)}`));
           if (m[3]) mkdirSync(path.join(fDir, `array_size__${m[3]}`));
-          if (m[4]) mkdirSync(path.join(fDir, `default__${safeName(m[4]).substring(0, 40)}`));
+          if (m[4]) mkdirSync(path.join(fDir, `default__${safeLiteralName(m[4], m[2]).substring(0, 40)}`));
           else if (!m[4]) mkdirSync(path.join(fDir, `default__missing__uninit_hazard`));
         }
       }
