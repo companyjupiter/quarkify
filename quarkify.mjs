@@ -176,6 +176,11 @@ const guessRole = typeof CONFIG.guessRole === 'function'
   : (name) => roleRules.find(([fragment]) => String(name).toLowerCase().includes(fragment))?.[1] || 'general';
 const OUTPUT_MARKER = '.quarkify-output';
 
+// One predicate, so an extension can never be recognized by discovery and then
+// dropped by the parser. `.mjs`/`.cjs` were missing here, which is why the
+// symbol audit reported 0% coverage on any ESM codebase.
+const JS_FAMILY_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
+
 // ─── PTX arg 의미 분류 (PTX Argument Classification) ───
 function classifyPtxArg(raw, opcode) {
   let r = raw.trim();
@@ -1319,6 +1324,7 @@ class QuarkFolderEngine {
     '.py': /^[ \t]*def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/gm,
     '.js': /\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g,
     '.mjs': /\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g,
+    '.cjs': /\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g,
     '.ts': /\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g,
     '.rb': /^[ \t]*def\s+(?:self\.)?([A-Za-z_][A-Za-z0-9_]*[?!=]?)/gm,
   };
@@ -1614,7 +1620,7 @@ class QuarkFolderEngine {
           let fields = [];
           if (ext === '.java') {
             fields = parseJavaFields(inner);
-          } else if (ext === '.ts' || ext === '.js' || ext === '.tsx' || ext === '.jsx') {
+          } else if (JS_FAMILY_EXTENSIONS.has(ext)) {
             fields = parseJSFields(inner);
           } else {
             fields = parseZigStructFields(inner);
@@ -1716,7 +1722,7 @@ class QuarkFolderEngine {
           } else if ((m = line.match(/^\s*(?:public\s+|protected\s+|private\s+|static\s+|final\s+|transient\s+|volatile\s+)*[a-zA-Z0-9_<>\[\]]+\s+([a-zA-Z0-9_]+)\s*(?:=|;)/))) {
             name = m[1]; kind = 'var'; role = 'state';
           }
-        } else if (ext === '.ts' || ext === '.js' || ext === '.tsx' || ext === '.jsx') {
+        } else if (JS_FAMILY_EXTENSIONS.has(ext)) {
           const trimmed = line.trim();
           if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*') || trimmed.length === 0 || trimmed.startsWith('import ') || trimmed.startsWith('export *')) {
           } else if ((m = line.match(/^\s*(?:export\s+)?(class|interface)\s+([a-zA-Z0-9_]+)/))) {

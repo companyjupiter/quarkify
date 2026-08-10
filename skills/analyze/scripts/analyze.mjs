@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const SUPPORTED_EXTENSIONS = new Set([
   '.cc', '.cpp', '.cu', '.cuh', '.cxx', '.h', '.hpp', '.java', '.js', '.jsx',
-  '.m', '.metal', '.mm', '.ptx', '.py', '.rb', '.ts', '.tsx', '.zig',
+  '.cjs', '.m', '.metal', '.mjs', '.mm', '.ptx', '.py', '.rb', '.ts', '.tsx', '.zig',
 ]);
 
 const IGNORED_DIRECTORIES = new Set([
