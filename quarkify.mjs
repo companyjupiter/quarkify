@@ -40,9 +40,10 @@ import { execSync } from 'child_process';
 // ─── CLI / 컨피그 로드 (Load CLI / Config) ───
 const cli = parseCliArgs(process.argv.slice(2));
 const configPath = cli.configPath;
+const STRICT_COVERAGE = cli.strictCoverage;
 if (!configPath) {
   console.error('❌ 에러: 설정 파일 경로가 제공되지 않았습니다.');
-  console.error('사용법: node quarkify.mjs [--allow-executable-config] <configs/config_name.json|mjs>');
+  console.error('사용법: node quarkify.mjs [--allow-executable-config] [--strict-coverage] <configs/config_name.json|mjs>');
   process.exit(1);
 }
 if (!fs.existsSync(configPath)) {
@@ -66,10 +67,13 @@ try {
 // ─── 유틸 (Utils) ───
 function parseCliArgs(args) {
   let allowExecutableConfig = false;
+  let strictCoverage = false;
   const positional = [];
   for (const arg of args) {
     if (arg === '--allow-executable-config') {
       allowExecutableConfig = true;
+    } else if (arg === '--strict-coverage') {
+      strictCoverage = true;
     } else if (arg.startsWith('-')) {
       console.error(`❌ 에러: 알 수 없는 옵션입니다: ${arg}`);
       process.exit(1);
@@ -81,7 +85,7 @@ function parseCliArgs(args) {
     console.error('❌ 에러: 설정 파일은 하나만 지정할 수 있습니다.');
     process.exit(1);
   }
-  return { configPath: positional[0], allowExecutableConfig };
+  return { configPath: positional[0], allowExecutableConfig, strictCoverage };
 }
 
 async function loadConfig(absPath, allowExecutableConfig) {
@@ -935,6 +939,74 @@ class QuarkFolderEngine {
     this.axons = [];
     this.byOpcodeSites = {};
     this.perfEntries = 0;
+    // Symbol coverage audit: what a deliberately naive scan expects to find,
+    // recorded per file so it can be diffed against what actually got built.
+    this.expectedSymbols = [];
+  }
+
+  // ─── Symbol coverage audit ───
+  //
+  // A folder tree has no schema to violate, so when a parser pattern misses a
+  // declaration the result is indistinguishable from "that symbol does not
+  // exist": no error, no warning, and an output that looks complete. A real
+  // case: the Zig matcher accepted `pub`/`inline`/`noinline` but not `export`,
+  // so an engine's entire ABI surface (JNI entry points, the public API) was
+  // absent and only a hand-written symbol count caught it.
+  //
+  // This scan exists to make that failure loud. It is deliberately NOT the
+  // parser's regex — a shared pattern would be blind in exactly the same way.
+  // It is a permissive keyword sweep, and only the direction that matters is
+  // reported: declared in the source but missing from the tree.
+  static NAIVE_SYMBOL_SCANS = {
+    '.zig': /\bfn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/g,
+    '.py': /^[ \t]*def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/gm,
+    '.js': /\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g,
+    '.mjs': /\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g,
+    '.ts': /\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g,
+  };
+
+  // Strip line/block comments and string bodies so a `fn` inside prose or a
+  // literal is not reported as a missing symbol.
+  static stripNonCode(text) {
+    return text
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/\/\/[^\n]*/g, ' ')
+      .replace(/#[^\n]*/g, ' ')
+      .replace(/"(?:[^"\\\n]|\\.)*"/g, '""')
+      .replace(/'(?:[^'\\\n]|\\.)*'/g, "''");
+  }
+
+  recordExpectedSymbols(text, ext, relPath, fileFolderName) {
+    const pattern = QuarkFolderEngine.NAIVE_SYMBOL_SCANS[ext];
+    if (!pattern) return; // no independent scan for this language yet
+    const names = new Set();
+    const code = QuarkFolderEngine.stripNonCode(text);
+    for (const match of code.matchAll(pattern)) names.add(match[1]);
+    if (names.size) this.expectedSymbols.push({ relPath, fileFolderName, names });
+  }
+
+  auditSymbolCoverage() {
+    const collectFnNames = (dir, found = new Set()) => {
+      if (!fs.existsSync(dir)) return found;
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        if (entry.name.startsWith('fn__')) found.add(entry.name.slice(4));
+        collectFnNames(path.join(dir, entry.name), found);
+      }
+      return found;
+    };
+
+    let expected = 0;
+    let matched = 0;
+    const gaps = [];
+    for (const file of this.expectedSymbols) {
+      const built = collectFnNames(path.join(this.quarkDir, file.fileFolderName));
+      const missing = [...file.names].filter((name) => !built.has(safeName(name)) && !built.has(name));
+      expected += file.names.size;
+      matched += file.names.size - missing.length;
+      if (missing.length) gaps.push({ relPath: file.relPath, missing });
+    }
+    return { expected, matched, gaps };
   }
 
   init() {
@@ -960,6 +1032,7 @@ class QuarkFolderEngine {
     const fileFolderName = `file__${safeName(relPath)}`;
     const fileQuarkPath = path.join(this.quarkDir, fileFolderName);
     mkdirSync(fileQuarkPath);
+    this.recordExpectedSymbols(text, ext, relPath, fileFolderName);
 
     if (ext === '.ptx') { this.processPTX(text, fileQuarkPath, relPath); return; }
     if (ext === '.metal') { this.processMetal(text, fileQuarkPath, relPath); return; }
@@ -2235,8 +2308,30 @@ async function main() {
   console.log(` 🔗 액손:             ${s.axonCount}`);
   console.log(` 📊 perf 임베드:      ${s.perfEntries}`);
   console.log(` 🔣 opcode 종류:      ${s.opcodeFamilies}`);
+
+  // Symbol coverage — the one line that tells you whether to trust the rest.
+  const audit = engine.auditSymbolCoverage();
+  if (audit.expected > 0) {
+    const pct = ((audit.matched / audit.expected) * 100).toFixed(1);
+    const label = audit.gaps.length ? '⚠️  심볼 커버리지' : ' 🔎 심볼 커버리지';
+    console.log(`${label}:    ${audit.matched}/${audit.expected} (${pct}%)`);
+  }
   console.log(` 📁 경로:             ${path.resolve(CONFIG.outDir)}`);
   console.log('=============================================\n');
+
+  if (audit.gaps.length) {
+    // Loud on purpose. A silent gap is the failure mode this exists to prevent.
+    console.warn('⚠️  일부 심볼이 소스에는 있으나 쿼크 트리에 없습니다 (파서가 놓쳤을 수 있습니다):');
+    for (const gap of audit.gaps) {
+      const shown = gap.missing.slice(0, 10).join(', ');
+      const rest = gap.missing.length > 10 ? ` … 외 ${gap.missing.length - 10}개` : '';
+      console.warn(`    ${gap.relPath}: ${shown}${rest}`);
+    }
+    console.warn('    --strict-coverage 를 주면 이 상태에서 실패로 종료합니다.\n');
+    if (STRICT_COVERAGE) {
+      throw new Error(`symbol coverage gap: ${audit.expected - audit.matched} symbol(s) missing from the quark tree`);
+    }
+  }
 }
 main().catch((err) => {
   console.error(err && err.message ? err.message : err);
