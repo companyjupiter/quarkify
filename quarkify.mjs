@@ -36,6 +36,7 @@ import os from 'os';
 import path from 'path';
 import { pathToFileURL } from 'url';
 import { execSync } from 'child_process';
+import { createHash } from 'crypto';
 
 // ─── CLI / 컨피그 로드 (Load CLI / Config) ───
 const cli = parseCliArgs(process.argv.slice(2));
@@ -1304,6 +1305,47 @@ class QuarkFolderEngine {
     // recorded per file so it can be diffed against what actually got built.
     this.expectedSymbols = [];
     this.filePaths = new Map();
+    this.fileFolders = new Map();
+  }
+
+  // ─── File folder names must be injective ───
+  //
+  // safeName() maps every path separator to `_`, so
+  //   src/admin/user_settings.rb
+  //   src/admin_user/settings.rb
+  // produce the same `file__…` name — and mkdir is recursive, so the second
+  // file's symbols land silently inside the first one's folder. The coverage
+  // audit cannot see it either: it scans the merged folder and finds every
+  // symbol it expected. safeName()'s 100-char truncation collides the same way
+  // on deep trees.
+  //
+  // A path that collides with nothing keeps its exact readable name. When a
+  // group does collide, *every* member takes a digest of its real path, so the
+  // disambiguation is a function of the file set alone and never of the order
+  // files happen to be processed in.
+  planFileFolders(relPaths) {
+    const groups = new Map();
+    for (const rel of relPaths) {
+      const base = `file__${safeName(rel)}`;
+      if (!groups.has(base)) groups.set(base, []);
+      groups.get(base).push(rel);
+    }
+    for (const [base, members] of groups) {
+      for (const rel of members) {
+        const name = members.length === 1
+          ? base
+          : `${base}__${createHash('sha1').update(rel).digest('hex').slice(0, 8)}`;
+        this.fileFolders.set(rel, name);
+      }
+    }
+    const collided = [...groups.values()].filter((m) => m.length > 1);
+    for (const members of collided) {
+      console.log(`[!] 파일 폴더명 충돌 → 경로 해시로 구분: ${members.join(', ')}`);
+    }
+  }
+
+  fileFolderName(relPath) {
+    return this.fileFolders.get(relPath) || `file__${safeName(relPath)}`;
   }
 
   // ─── Symbol coverage audit ───
@@ -1410,7 +1452,7 @@ class QuarkFolderEngine {
     // A compiled artifact is not text, and reading it as UTF-8 would corrupt it
     // before we ever get to look. Sniff the ELF magic from the raw bytes first.
     if (isElfFile(absPath)) {
-      const binFolderName = `binary__${safeName(relPath)}`;
+      const binFolderName = this.fileFolderName(relPath).replace(/^file__/, 'binary__');
       const binQuarkPath = path.join(this.quarkDir, binFolderName);
       mkdirSync(binQuarkPath);
       this.processElf(absPath, binQuarkPath, relPath);
@@ -1420,7 +1462,7 @@ class QuarkFolderEngine {
     const text = fs.readFileSync(absPath, 'utf-8');
     const lines = text.split('\n');
     const ext = path.extname(absPath);
-    const fileFolderName = `file__${safeName(relPath)}`;
+    const fileFolderName = this.fileFolderName(relPath);
     this.filePaths.set(fileFolderName, relPath);
     const fileQuarkPath = path.join(this.quarkDir, fileFolderName);
     mkdirSync(fileQuarkPath);
@@ -2812,6 +2854,7 @@ async function main() {
 
   const engine = new QuarkFolderEngine(CONFIG.outDir);
   engine.init();
+  engine.planFileFolders(resolvedFiles);
 
   for (const rel of resolvedFiles) {
     const abs = validateSourceFilePath(srcRoot, rel);
