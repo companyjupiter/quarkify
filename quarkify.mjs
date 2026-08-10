@@ -1061,7 +1061,7 @@ class QuarkFolderEngine {
             else mkdirSync(path.join(fDir, `default__missing__uninit_hazard`));
           }
           // RECURSE into the container body
-          if (/(?:^|\n)\s*(?:pub\s+)?(?:noinline\s+|inline\s+)?fn\s+[a-zA-Z0-9_]+\s*\(|(?:^|\n)\s*(?:pub\s+)?const\s+[a-zA-Z0-9_]+\s*=\s*(?:extern\s+|packed\s+)?(?:struct|union|enum)|(?:^|\n)\s*(?:template\s*<[^>]*>\s*)?(?:class|struct)\s+[a-zA-Z_]|\b(?:class|interface|enum|record)\s+[a-zA-Z0-9_]+|\b[a-zA-Z0-9_]+\s+[a-zA-Z0-9_]+\s*\([^;]*\{|\b(?:function)\b|=>/.test(inner)) {
+          if (/(?:^|\n)\s*(?:pub\s+)?(?:export\s+|extern\s+(?:\"[^\"]*\"\s+)?|noinline\s+|inline\s+)?fn\s+[a-zA-Z0-9_]+\s*\(|(?:^|\n)\s*(?:pub\s+)?const\s+[a-zA-Z0-9_]+\s*=\s*(?:extern\s+|packed\s+)?(?:struct|union|enum)|(?:^|\n)\s*(?:template\s*<[^>]*>\s*)?(?:class|struct)\s+[a-zA-Z_]|\b(?:class|interface|enum|record)\s+[a-zA-Z0-9_]+|\b[a-zA-Z0-9_]+\s+[a-zA-Z0-9_]+\s*\([^;]*\{|\b(?:function)\b|=>/.test(inner)) {
             const innerLines = inner.split('\n');
             this.processCStyle(inner, innerLines, ext, symQuarkPath, relPath);
           }
@@ -1105,7 +1105,7 @@ class QuarkFolderEngine {
       if (!cur) {
         let m, name, kind, role;
         if (ext === '.zig') {
-          if ((m = line.match(/^\s*(?:pub\s+)?(?:noinline\s+|inline\s+)?fn\s+([a-zA-Z0-9_]+)\s*\(/))) {
+          if ((m = line.match(/^\s*(?:pub\s+)?(?:export\s+|extern\s+(?:\"[^\"]*\"\s+)?|noinline\s+|inline\s+)?fn\s+([a-zA-Z0-9_]+)\s*\(/))) {
             name = m[1]; kind = 'fn'; role = guessRole(name);
           } else if ((m = line.match(/^\s*(?:pub\s+)?const\s+([a-zA-Z0-9_]+)\s*=\s*(?:extern\s+|packed\s+)?struct/))) {
             name = m[1]; kind = 'struct'; role = 'type';
