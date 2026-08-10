@@ -8,7 +8,7 @@
       "name": "quarkify",
       "source": "./",
       "description": "Analyze local source repositories and build AI-ready topology maps.",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": {
         "name": "teamjupiter"
       }
