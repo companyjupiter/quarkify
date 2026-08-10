@@ -1,4 +1,4 @@
-# Quarkify v1.0.0 ⚛️
+# Quarkify v1.0.1 ⚛️
 
 > **"Everything is a folder" Philosophy — Local-First Static Analysis Engine & Source Code Topology Map Builder**
 
@@ -53,26 +53,25 @@ Quarkify has been successfully tested on several large-scale open-source and ent
 
 ---
 
-## 🌐 D3.js Force-Directed Interactive Graph (`index.html`)
+## 🌐 Interactive Topology Viewer (`index.html`)
 
 Upon completion, a dark-themed visualizer dashboard **`index.html`** is generated at the root of the output directory:
 
-![Quarkify D3.js Force-Directed Demo](./docs/images/d3_demo.gif)
-
-* **Interactive Network Map**: Built using D3.js Force-Directed Layout. Visualizes the parsed quarks and inter-dependencies (`_axon` links) as an interactive network graph in the browser.
+* **Overview Mode**: Renders the complete project topology as depth-based rings, preserving parent-child links from project and directory nodes through files, symbols, and statements.
+* **Explore Mode**: Shows a labeled view of the selected node and its direct children for focused navigation through large repositories.
 * **Local-First Standalone File**: All topological data is embedded directly into the HTML file. It runs instantly inside any modern web browser by double-clicking the file — no local server required.
-* **Optimized Zoom & Focus**: Clicking on a node centers the graph and isolates related parent classes and caller methods.
+* **Zoom, Pan & Inspect**: Use the mouse wheel or toolbar controls to zoom, drag to pan, click to inspect a node, and double-click an Overview node to open it in Explore mode.
 
 ---
 
 ## 🗂️ Output Directory Layout
 
-Once analysis completes, Quarkify physically creates three core folders, a D3 visualizer, and an AI guide under the configured output directory:
+Once analysis completes, Quarkify physically creates three core folders, an interactive visualizer, and an AI guide under the configured output directory:
 
 * **`quark/`**: The raw source code decomposed recursively into class, method, field, and statement directories.
 * **`_mirror/`**: Categorized symbolic links grouping quarks by kind (`by_kind`), project-specific role (`by_role`), and file (`by_file`) for multi-dimensional querying.
 * **`_axon/`**: Inter-connectivity links mapping quarks back to their mirror categories, along with an opcode site registry (`by_opcode`).
-* **`index.html`**: Standing D3 Force-Directed UI dashboard for visual topology exploration.
+* **`index.html`**: Standalone Canvas dashboard with full-topology Overview and focused Explore modes.
 * **`ai_context_guide.txt`**: Guide directives instructing local AI coding agents (LLMs) to leverage quarks to minimize token waste and pinpoint source scopes.
 
 ---
