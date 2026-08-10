@@ -31,6 +31,8 @@ test('plugin manifests expose the shared analyze skill', () => {
   assert.equal(claude.name, 'quarkify');
   assert.equal(codex.skills, './skills/');
   assert.equal(claude.skills, './skills/');
+  assert.equal(claude.version, codex.version);
+  assert.equal(claudeMarketplace.plugins[0].version, codex.version);
   assert.equal(codexMarketplace.plugins[0].source.path, './');
   assert.equal(claudeMarketplace.plugins[0].source, './');
 });
