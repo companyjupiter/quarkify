@@ -1,4 +1,4 @@
-# Quarkify v1.0.1 ⚛️
+# Quarkify v1.1.0 ⚛️
 
 > **"Everything is a folder" 철학을 준수하는 로컬 환경 특화형 정적 분석 & 소스 코드 위상 맵(Topology Map) 빌더**
 
@@ -29,6 +29,7 @@ Quarkify가 구현한 물리 디렉터리 토폴로지 맵은 AI 에이전트(�
 * **들여쓰기(Indent) 기반의 Python 구문 파서**: 중괄호가 없는 파이썬 고유의 문법을 공백 깊이 기반으로 재귀 순회하여, 클래스/함수/데코레이터/제어 구조(if, for, try-except-finally)를 완벽하게 물리 노드로 변환합니다.
 * **TypeScript & JavaScript CStyle 파서 확장**: 화살표 함수(`const fn = () => ...`), 클래스 내부 멤버 프로퍼티 필드 및 비동기(`async`) 선언을 정교하게 쪼개어 계층 구조화합니다.
 * **Spring Framework & Java 어노테이션 실체화**: `@RestController`, `@Autowired`, `@GetMapping("/api")` 등의 클래스/메서드/필드 어노테이션 정보를 하위 속성 인자값까지 분해하여 `annotation__` 디렉터리로 완벽하게 구조화합니다.
+* **Ruby `end` 블록 파서 및 DSL 매크로 실체화**: 중괄호나 들여쓰기가 아닌 Ruby의 키워드 블록(`def`/`class`/`module`/`case`/`rescue`) 깊이를 추적하며, heredoc·엔드리스 메서드(`def foo = expr`)·수식어 `if` 를 정확히 처리합니다. 클래스 본문의 DSL 매크로(`has_many`, `validates`, `before_action`)는 Spring 어노테이션과 동일하게 `annotation__` 폴더로 실체화되고, `valid?`/`valid!`/`valid=` 는 하나로 합쳐지지 않고 서로 다른 노드로 보존됩니다.
 * **Try-Catch-Finally 블록의 계층적 분해**: 예외 처리 흐름을 정밀 분석하여 `stmt__try` 하위에 본문(`body`), 리소스 선언(`resource`), 예외 시그니처(`catch___Exception`), 그리고 `finally` 영역을 개별 폴더로 쪼개어 시각화합니다.
 * **자체 Glob 패턴 탐색기 내장**: `sourceFiles` 설정에 `**/*.java` 나 `src/**/*.ts` 같은 와일드카드를 기입하면, 로컬 소스 디렉터리를 알아서 스캔하고 파일 목록을 매칭하여 한 번에 일괄 물리 빌드를 수행합니다.
 

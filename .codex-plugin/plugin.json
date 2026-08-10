@@ -1,6 +1,6 @@
 {
   "name": "quarkify",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Analyze local source repositories and build AI-ready topology maps with Quarkify.",
   "author": {
     "name": "teamjupiter",
