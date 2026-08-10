@@ -81,6 +81,7 @@ Quarkify는 대규모 상용 및 오픈소스 프로젝트에 적용하여 대�
 * **TypeScript & JavaScript** (`.ts`, `.js`, `.tsx`, `.jsx`) - *화살표 함수, 클래스/인터페이스, 비동기(async) 함수 및 클래스 내부 프로퍼티(필드) 파싱 지원*
 * **Python** (`.py`) - *실행 환경 버전 동적 수집, 데코레이터 분석, 들여쓰기 기반의 클래스/함수 및 try-except-finally 분해 지원*
 * **Java** (`.java`) - *Spring Boot 어노테이션 및 고급 try-catch 흐름 분해 지원*
+* **Ruby** (`.rb`) - *`end` 키워드 블록 파서: 모듈/클래스/싱글턴 메서드/엔드리스 메서드, case-when 및 rescue-ensure 분해 지원. `valid?`, `save!`, `name=` 는 서로 다른 노드로 보존되며, 클래스 본문의 DSL 매크로(`has_many`, `validates`, `before_action`)는 Spring 어노테이션과 동일하게 `annotation__` 폴더로 매핑됩니다*
 * **Zig** (`.zig`)
 * **CUDA C++** (`.cu`, `.cuh`)
 * **C / C++** (`.cpp`, `.cc`, `.cxx`, `.h`, `.hpp`)
