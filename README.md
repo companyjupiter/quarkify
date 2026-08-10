@@ -1,4 +1,4 @@
-# Quarkify v1.0.1 ⚛️
+# Quarkify v1.1.0 ⚛️
 
 > **"Everything is a folder" Philosophy — Local-First Static Analysis Engine & Source Code Topology Map Builder**
 
@@ -29,6 +29,7 @@ The physical directory topology map created by Quarkify unleashes **incredible s
 * **Indentation-Based Python Statement Parser**: Parses indentation-based Python syntax recursively and maps decorators, classes, functions, and control blocks (if, for, try-except-finally) into distinct folder nodes.
 * **TypeScript & JavaScript CStyle Parser Extension**: Deconstructs arrow functions (`const fn = () => ...`), class members, static properties, and asynchronous (`async`) declarations recursively into hierarchical directories.
 * **Spring Framework & Java Annotation Materialization**: Decomposes class, method, and field annotations (e.g., `@RestController`, `@Autowired`, `@GetMapping("/api")`) along with their arguments into structured `annotation__` folders.
+* **Ruby `end`-Block Parser & DSL Macro Materialization**: Tracks Ruby's keyword-delimited blocks (`def`/`class`/`module`/`case`/`rescue`) instead of braces or indentation, reading heredocs, endless methods (`def foo = expr`), and modifier `if` correctly. Class-body DSL macros (`has_many`, `validates`, `before_action`) land in `annotation__` folders exactly like Spring annotations, and `valid?`, `valid!`, `valid=` keep three distinct nodes rather than merging into one.
 * **Try-Catch-Finally Block Deconstruction**: Breaks down exception handling flows into individual physical directories under `stmt__try` representing the main `body`, resource initializers (`resource`), exception signatures (`catch___Exception`), and `finally` blocks.
 * **Built-in Glob Pattern Autoscan**: Support wildcard patterns like `**/*.java` or `src/**/*.ts` inside `sourceFiles` to recursively scan the local directory and build physical folder structures for all matched files in one execution.
 
