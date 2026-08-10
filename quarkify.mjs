@@ -928,6 +928,104 @@ function annotateGeneric(text, dir) {
   }
 }
 
+// ─── ELF (compiled binary) ───
+//
+// Source analysis can only describe what was written. A linked binary is what
+// actually exists: functions the optimizer inlined away are gone, symbols pulled
+// in from other objects are present, and every function has a real size in bytes
+// rather than a line count. For a Zig/C/C++ project the `.so` is the ground truth
+// that the sources only approximate — so it deserves a quark tree of its own.
+//
+// Parsed here directly (no nm/objdump dependency) because quarkify must run the
+// same way on a machine that has no binutils installed.
+const ELF_ST_TYPE = { 0: 'NOTYPE', 1: 'OBJECT', 2: 'FUNC', 3: 'SECTION', 4: 'FILE', 6: 'TLS', 10: 'GNU_IFUNC' };
+const ELF_ST_BIND = { 0: 'LOCAL', 1: 'GLOBAL', 2: 'WEAK', 10: 'GNU_UNIQUE' };
+const ELF_MACHINE = { 3: 'x86', 40: 'ARM', 62: 'x86_64', 183: 'AArch64', 243: 'RISC-V' };
+
+function isElfFile(absPath) {
+  let fd;
+  try {
+    fd = fs.openSync(absPath, 'r');
+    const head = Buffer.alloc(4);
+    if (fs.readSync(fd, head, 0, 4, 0) !== 4) return false;
+    return head.readUInt32BE(0) === 0x7f454c46; // \x7fELF
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+function readElf64(absPath) {
+  const buf = fs.readFileSync(absPath);
+  if (buf.length < 64 || buf.readUInt32BE(0) !== 0x7f454c46) throw new Error('not an ELF file');
+  if (buf[4] !== 2) throw new Error('only 64-bit ELF is supported');
+  if (buf[5] !== 1) throw new Error('only little-endian ELF is supported');
+
+  const shoff = Number(buf.readBigUInt64LE(0x28));
+  const shentsize = buf.readUInt16LE(0x3a);
+  const shnum = buf.readUInt16LE(0x3c);
+  const shstrndx = buf.readUInt16LE(0x3e);
+
+  const sections = [];
+  for (let i = 0; i < shnum; i++) {
+    const o = shoff + i * shentsize;
+    sections.push({
+      nameOff: buf.readUInt32LE(o),
+      type: buf.readUInt32LE(o + 4),
+      addr: Number(buf.readBigUInt64LE(o + 16)),
+      offset: Number(buf.readBigUInt64LE(o + 24)),
+      size: Number(buf.readBigUInt64LE(o + 32)),
+      link: buf.readUInt32LE(o + 40),
+      entsize: Number(buf.readBigUInt64LE(o + 56)),
+    });
+  }
+
+  const readStr = (base, off) => {
+    let end = base + off;
+    while (end < buf.length && buf[end] !== 0) end++;
+    return buf.toString('utf8', base + off, end);
+  };
+  const shstr = sections[shstrndx];
+  if (shstr) for (const s of sections) s.name = readStr(shstr.offset, s.nameOff);
+
+  // SHT_SYMTAB = 2 (dropped when stripped), SHT_DYNSYM = 11 (always present in a .so).
+  // Both are read, then de-duplicated — a symbol usually appears in each.
+  const seen = new Set();
+  const symbols = [];
+  for (const s of sections) {
+    if (s.type !== 2 && s.type !== 11) continue;
+    const strtab = sections[s.link];
+    if (!strtab) continue;
+    const count = s.entsize ? Math.floor(s.size / s.entsize) : 0;
+    for (let i = 0; i < count; i++) {
+      const o = s.offset + i * 24;
+      const name = readStr(strtab.offset, buf.readUInt32LE(o));
+      if (!name) continue;
+      const info = buf[o + 4];
+      const shndx = buf.readUInt16LE(o + 6);
+      const value = Number(buf.readBigUInt64LE(o + 8));
+      const key = `${name}@${value}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      symbols.push({
+        name,
+        bind: ELF_ST_BIND[info >> 4] ?? `BIND_${info >> 4}`,
+        type: ELF_ST_TYPE[info & 0xf] ?? `TYPE_${info & 0xf}`,
+        value,
+        size: Number(buf.readBigUInt64LE(o + 16)),
+        section: shndx === 0 ? 'UNDEF' : (sections[shndx]?.name || `shndx_${shndx}`),
+      });
+    }
+  }
+
+  return {
+    machine: ELF_MACHINE[buf.readUInt16LE(0x12)] ?? `machine_${buf.readUInt16LE(0x12)}`,
+    sections,
+    symbols,
+  };
+}
+
 // ─── 엔진 (Engine) ───
 class QuarkFolderEngine {
   constructor(outputDir) {
@@ -1026,6 +1124,16 @@ class QuarkFolderEngine {
   }
 
   processFile(absPath, relPath) {
+    // A compiled artifact is not text, and reading it as UTF-8 would corrupt it
+    // before we ever get to look. Sniff the ELF magic from the raw bytes first.
+    if (isElfFile(absPath)) {
+      const binFolderName = `binary__${safeName(relPath)}`;
+      const binQuarkPath = path.join(this.quarkDir, binFolderName);
+      mkdirSync(binQuarkPath);
+      this.processElf(absPath, binQuarkPath, relPath);
+      return;
+    }
+
     const text = fs.readFileSync(absPath, 'utf-8');
     const lines = text.split('\n');
     const ext = path.extname(absPath);
@@ -1041,6 +1149,51 @@ class QuarkFolderEngine {
 
     // Zig / .cu / .cuh — symbol detection + recursive fn body for Zig
     this.processCStyle(text, lines, ext, fileQuarkPath, relPath);
+  }
+
+  // Materialize a linked binary. Layout mirrors what the file itself is made of:
+  //
+  //   binary__libfoo.so/
+  //     machine__AArch64/
+  //     section__.text/
+  //       sym__forwardOneToken/  addr__0xd1470/  size__99804/  bind__GLOBAL/
+  //     section__UNDEF/          <- what this binary needs from someone else
+  //       sym__c_enn_execute/
+  //
+  // `size` here is compiled bytes, not lines — the number you actually need when
+  // reasoning about I-cache pressure or why a "small" function is expensive.
+  processElf(absPath, binQuarkPath, relPath) {
+    let elf;
+    try {
+      elf = readElf64(absPath);
+    } catch (err) {
+      console.log(`[-] ELF 파싱 실패: ${relPath} (${err.message})`);
+      return;
+    }
+
+    mkdirSync(path.join(binQuarkPath, `machine__${safeName(elf.machine)}`));
+
+    let functions = 0;
+    let undefined_ = 0;
+    for (const sym of elf.symbols) {
+      if (sym.type === 'SECTION' || sym.type === 'FILE') continue;
+      const sectionDir = path.join(binQuarkPath, `section__${safeName(sym.section)}`);
+      const symQuarkPath = path.join(sectionDir, `sym__${safeName(sym.name)}`);
+      mkdirSync(symQuarkPath);
+      mkdirSync(path.join(symQuarkPath, `addr__0x${sym.value.toString(16)}`));
+      mkdirSync(path.join(symQuarkPath, `size__${sym.size}`));
+      mkdirSync(path.join(symQuarkPath, `bind__${safeName(sym.bind)}`));
+      mkdirSync(path.join(symQuarkPath, `type__${safeName(sym.type)}`));
+
+      const role = sym.section === 'UNDEF' ? 'external_dependency' : guessRole(sym.name);
+      this.registerMirror(sym.type.toLowerCase(), role, relPath,
+        path.relative(this.quarkDir, symQuarkPath));
+
+      if (sym.type === 'FUNC') functions++;
+      if (sym.section === 'UNDEF') undefined_++;
+    }
+
+    console.log(`    ↳ ${elf.machine} · 심볼 ${elf.symbols.length} (FUNC ${functions} / 외부참조 ${undefined_})`);
   }
 
   processPython(text, fileQuarkPath, relPath) {
