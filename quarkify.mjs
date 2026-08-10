@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 쿼크화(Quarkify) v1.0.1 — Generic config-driven engine (Quarkify v1.0.1 — Generic config-driven engine)
+ * 쿼크화(Quarkify) v1.1.0 — Generic config-driven engine (Quarkify v1.1.0 — Generic config-driven engine)
  *
  * Copyright 2026 teamjupiter
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -219,6 +219,10 @@ const guessRole = typeof CONFIG.guessRole === 'function'
   ? CONFIG.guessRole
   : (name) => roleRules.find(([fragment]) => String(name).toLowerCase().includes(fragment))?.[1] || 'general';
 const OUTPUT_MARKER = '.quarkify-output';
+
+// One source for every version string the user actually sees. Keep in step with
+// package.json and the plugin manifests on release.
+const QUARKIFY_VERSION = '1.1.0';
 
 // One predicate, so an extension can never be recognized by discovery and then
 // dropped by the parser. `.mjs`/`.cjs` were missing here, which is why the
@@ -2446,7 +2450,7 @@ class QuarkFolderEngine {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Quarkify v1.0.1 Explorer - ${CONFIG.name}</title>
+    <title>Quarkify v${QUARKIFY_VERSION} Explorer - ${CONFIG.name}</title>
     <style>
         * { box-sizing: border-box; }
         :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
@@ -2478,7 +2482,7 @@ class QuarkFolderEngine {
   <main class="app">
     <aside class="sidebar">
         <header>
-            <h1 class="title">Quarkify v1.0.1 ⚛️</h1>
+            <h1 class="title">Quarkify v${QUARKIFY_VERSION} ⚛️</h1>
             <p class="subtitle">${CONFIG.name}</p>
         </header>
         <div class="stats">
@@ -2855,7 +2859,7 @@ function validateSourceFilePath(srcRoot, relPath) {
 
 // ─── main (Main Entry Point) ───
 async function main() {
-  console.log(`🔬 quarkify v1.0.1 — ${CONFIG.name} 시작...`);
+  console.log(`🔬 quarkify v${QUARKIFY_VERSION} — ${CONFIG.name} 시작...`);
   console.log(`📂 srcDir:  ${CONFIG.srcDir}`);
   console.log(`📁 outDir:  ${CONFIG.outDir}\n`);
 

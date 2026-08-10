@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "quarkify",
   "displayName": "Quarkify",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Analyze local source repositories and build AI-ready topology maps with Quarkify.",
   "author": {
     "name": "teamjupiter",
