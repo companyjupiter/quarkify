@@ -171,7 +171,50 @@ function perfBand(pct) {
   return '95_max';
 }
 
-const roleRules = Object.entries(CONFIG.roleRules || {}).map(([fragment, role]) => [fragment.trim().toLowerCase(), role.trim()]);
+// The AI context guide advertises `ls output_dir/_mirror/by_role/web_endpoint`,
+// but with no roleRules configured guessRole() answered 'general' for every
+// symbol in every language, so that mirror never held anything: one
+// undifferentiated bucket no matter how large the project.
+//
+// These are name fragments that carry a role across the ecosystems quarkify
+// parses. Deliberately conservative: only fragments long and specific enough to
+// avoid matching inside an unrelated word, since the lookup is a substring test.
+// A config that sets its own roleRules replaces this wholesale.
+const DEFAULT_ROLE_RULES = {
+  controller: 'web_endpoint',
+  endpoint: 'web_endpoint',
+  handler: 'web_endpoint',
+  resolver: 'web_endpoint',
+  serializer: 'presentation',
+  presenter: 'presentation',
+  repository: 'data_access',
+  migration: 'data_access',
+  mapper: 'data_access',
+  entity: 'data_access',
+  model: 'data_access',
+  scheduler: 'background_job',
+  subscriber: 'event_handling',
+  listener: 'event_handling',
+  consumer: 'background_job',
+  producer: 'background_job',
+  worker: 'background_job',
+  job: 'background_job',
+  interactor: 'business_logic',
+  usecase: 'business_logic',
+  service: 'business_logic',
+  policy: 'business_logic',
+  validator: 'validation',
+  gateway: 'external_io',
+  adapter: 'external_io',
+  client: 'external_io',
+  formatter: 'utility',
+  parser: 'utility',
+  helper: 'utility',
+  util: 'utility',
+  config: 'configuration',
+};
+
+const roleRules = Object.entries(CONFIG.roleRules || DEFAULT_ROLE_RULES).map(([fragment, role]) => [fragment.trim().toLowerCase(), role.trim()]);
 const guessRole = typeof CONFIG.guessRole === 'function'
   ? CONFIG.guessRole
   : (name) => roleRules.find(([fragment]) => String(name).toLowerCase().includes(fragment))?.[1] || 'general';

@@ -330,6 +330,33 @@ test('an unmatched end does not discard the rest of the file', async () => {
   });
 });
 
+// `index` and `perform` carry no role on their own; the enclosing class does.
+// Without the fallback every method in the app lands in by_role/general.
+test('methods inherit their role from the enclosing class', async () => {
+  await withTempWorkspace(async (workspace) => {
+    const { result } = await runOnRuby(workspace, [
+      'class PostsController',
+      '  def index',
+      '    :ok',
+      '  end',
+      'end',
+      '',
+      'class BriefDeliveryJob',
+      '  def perform',
+      '    :sent',
+      '  end',
+      'end',
+      '',
+    ].join('\n'));
+
+    assert.equal(result.status, 0, result.stderr);
+    const outDir = path.join(workspace, 'out');
+    const roles = await readdir(path.join(outDir, '_mirror', 'by_role'));
+    assert.ok(roles.includes('web_endpoint'), roles.join(','));
+    assert.ok(roles.includes('background_job'), roles.join(','));
+  });
+});
+
 test('a Ruby file reaches full symbol coverage under --strict-coverage', async () => {
   await withTempWorkspace(async (workspace) => {
     const { result } = await runOnRuby(workspace, [
