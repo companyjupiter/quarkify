@@ -78,9 +78,10 @@ Once analysis completes, Quarkify physically creates three core folders, an inte
 
 ## 🛠️ Supported Languages
 
-* **TypeScript & JavaScript** (`.ts`, `.js`, `.tsx`, `.jsx`) - *Supports arrow functions, classes, interfaces, async declarations, and class field properties.*
+* **TypeScript & JavaScript** (`.ts`, `.js`, `.tsx`, `.jsx`, `.mjs`, `.cjs`) - *Supports arrow functions, classes, interfaces, async declarations, and class field properties.*
 * **Python** (`.py`) - *Supports runtime version auto-detection, decorator parsing, and indentation-based statement (try-except-finally, if, for) deconstruction.*
 * **Java** (`.java`) - *Supports Spring Boot annotations & advanced try-catch-finally block deconstruction.*
+* **Ruby** (`.rb`) - *Keyword-block (`end`) parser: modules, classes, singleton and endless methods, case/when and rescue/ensure deconstruction. Predicate, bang and setter methods (`valid?`, `save!`, `name=`) keep distinct nodes, and class-body DSL macros (`has_many`, `validates`, `before_action`) are mapped to `annotation__` folders like Spring annotations.*
 * **Zig** (`.zig`)
 * **CUDA C++** (`.cu`, `.cuh`)
 * **C / C++** (`.cpp`, `.cc`, `.cxx`, `.h`, `.hpp`)

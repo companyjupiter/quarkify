@@ -36,6 +36,7 @@ import os from 'os';
 import path from 'path';
 import { pathToFileURL } from 'url';
 import { execSync } from 'child_process';
+import { createHash } from 'crypto';
 
 // ─── CLI / 컨피그 로드 (Load CLI / Config) ───
 const cli = parseCliArgs(process.argv.slice(2));
@@ -170,11 +171,59 @@ function perfBand(pct) {
   return '95_max';
 }
 
-const roleRules = Object.entries(CONFIG.roleRules || {}).map(([fragment, role]) => [fragment.trim().toLowerCase(), role.trim()]);
+// The AI context guide advertises `ls output_dir/_mirror/by_role/web_endpoint`,
+// but with no roleRules configured guessRole() answered 'general' for every
+// symbol in every language, so that mirror never held anything: one
+// undifferentiated bucket no matter how large the project.
+//
+// These are name fragments that carry a role across the ecosystems quarkify
+// parses. Deliberately conservative: only fragments long and specific enough to
+// avoid matching inside an unrelated word, since the lookup is a substring test.
+// A config that sets its own roleRules replaces this wholesale.
+const DEFAULT_ROLE_RULES = {
+  controller: 'web_endpoint',
+  endpoint: 'web_endpoint',
+  handler: 'web_endpoint',
+  resolver: 'web_endpoint',
+  serializer: 'presentation',
+  presenter: 'presentation',
+  repository: 'data_access',
+  migration: 'data_access',
+  mapper: 'data_access',
+  entity: 'data_access',
+  model: 'data_access',
+  scheduler: 'background_job',
+  subscriber: 'event_handling',
+  listener: 'event_handling',
+  consumer: 'background_job',
+  producer: 'background_job',
+  worker: 'background_job',
+  job: 'background_job',
+  interactor: 'business_logic',
+  usecase: 'business_logic',
+  service: 'business_logic',
+  policy: 'business_logic',
+  validator: 'validation',
+  gateway: 'external_io',
+  adapter: 'external_io',
+  client: 'external_io',
+  formatter: 'utility',
+  parser: 'utility',
+  helper: 'utility',
+  util: 'utility',
+  config: 'configuration',
+};
+
+const roleRules = Object.entries(CONFIG.roleRules || DEFAULT_ROLE_RULES).map(([fragment, role]) => [fragment.trim().toLowerCase(), role.trim()]);
 const guessRole = typeof CONFIG.guessRole === 'function'
   ? CONFIG.guessRole
   : (name) => roleRules.find(([fragment]) => String(name).toLowerCase().includes(fragment))?.[1] || 'general';
 const OUTPUT_MARKER = '.quarkify-output';
+
+// One predicate, so an extension can never be recognized by discovery and then
+// dropped by the parser. `.mjs`/`.cjs` were missing here, which is why the
+// symbol audit reported 0% coverage on any ESM codebase.
+const JS_FAMILY_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
 
 // ─── PTX arg 의미 분류 (PTX Argument Classification) ───
 function classifyPtxArg(raw, opcode) {
@@ -818,26 +867,44 @@ class PythonIndentParser {
   }
 }
 
-// ─── Python 노드 → 폴더 트리 실체화 (Python Node to Folder Tree Realization) ───
-function emitPythonNode(node, parentPath, idx) {
+// ─── 블록 노드 → 폴더 트리 실체화 (Block Node to Folder Tree Realization) ───
+//
+// Shared by every block-structured language whose parser emits the
+// { line, index, kind, name, decorators, body[] } node shape — currently
+// PythonIndentParser and RubyEndParser. The parsers differ (indent depth vs
+// `end` keyword); the tree they describe does not, so only one emitter exists.
+const BLOCK_STMT_KINDS = new Set([
+  'if', 'elif', 'elsif', 'else', 'unless', 'for', 'while', 'until', 'case',
+  'when', 'try', 'except', 'rescue', 'finally', 'ensure', 'begin', 'do', 'return',
+]);
+
+function emitBlockNode(node, parentPath, idx) {
   const prefix = `stmt_${idx}`;
   let stmtName = `${prefix}__expr`;
 
   if (node.kind === 'class') stmtName = `class__${safeName(node.name)}`;
+  else if (node.kind === 'module') stmtName = `module__${safeName(node.name)}`;
   else if (node.kind === 'fn') stmtName = `fn__${safeName(node.name)}`;
   else if (node.kind === 'var') stmtName = `var__${safeName(node.name)}`;
-  else if (node.kind === 'if') stmtName = `${prefix}__if`;
-  else if (node.kind === 'elif') stmtName = `${prefix}__elif`;
-  else if (node.kind === 'else') stmtName = `${prefix}__else`;
-  else if (node.kind === 'for') stmtName = `${prefix}__for`;
-  else if (node.kind === 'while') stmtName = `${prefix}__while`;
-  else if (node.kind === 'try') stmtName = `${prefix}__try`;
-  else if (node.kind === 'except') stmtName = `${prefix}__except`;
-  else if (node.kind === 'finally') stmtName = `${prefix}__finally`;
-  else if (node.kind === 'return') stmtName = `${prefix}__return`;
+  else if (node.kind === 'annotation') stmtName = `annotation__${safeName(node.name)}`;
+  else if (BLOCK_STMT_KINDS.has(node.kind)) stmtName = `${prefix}__${node.kind}`;
 
   const dir = path.join(parentPath, stmtName);
   ensureDir(dir);
+
+  // A Ruby class-body macro (`has_many :posts`, `validates :name, presence: true`)
+  // is the structural twin of a Spring annotation, so it lands in the same
+  // annotation__NAME/arg__… shape the AI context guide already documents.
+  if (node.kind === 'annotation' && node.args) {
+    const parts = splitParamsTopLevel(node.args);
+    for (let ai = 0; ai < parts.length; ai++) {
+      const p = parts[ai].trim();
+      if (!p) continue;
+      const kv = p.match(/^([A-Za-z_][A-Za-z0-9_]*):\s+(.+)$/);
+      if (kv) mkdirSync(path.join(dir, `arg__${safeName(kv[1])}___${safeLiteralName(kv[2], kv[1]).substring(0, 40)}`));
+      else mkdirSync(path.join(dir, `arg__${ai}___${safeLiteralName(p.replace(/^:/, '')).substring(0, 40)}`));
+    }
+  }
 
   if (node.decorators && node.decorators.length > 0) {
     for (const dec of node.decorators) {
@@ -859,27 +926,267 @@ function emitPythonNode(node, parentPath, idx) {
     }
   }
 
-  if (node.kind !== 'class' && node.kind !== 'fn') {
+  const isScope = node.kind === 'class' || node.kind === 'module' || node.kind === 'fn';
+
+  if (!isScope && node.kind !== 'annotation') {
     const line = node.line;
     const callMatches = line.matchAll(/\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/g);
     for (const m of callMatches) {
       const callName = m[1];
-      if (!/^(if|while|for|return|try|except|finally|import|from|class|def|print)$/.test(callName)) {
+      if (!/^(if|unless|while|until|for|return|try|except|rescue|ensure|finally|import|from|class|module|def|print|puts)$/.test(callName)) {
         ensureDir(path.join(dir, `call__${safeName(callName)}`));
       }
     }
   }
 
   if (node.body && node.body.length > 0) {
-    const bodyDir = (node.kind === 'class' || node.kind === 'fn') ? dir : path.join(dir, 'body');
+    const bodyDir = isScope ? dir : path.join(dir, 'body');
     ensureDir(bodyDir);
-    emitPythonList(node.body, bodyDir);
+    emitBlockList(node.body, bodyDir);
   }
 }
 
-function emitPythonList(nodes, parentPath) {
+function emitBlockList(nodes, parentPath) {
   for (let i = 0; i < nodes.length; i++) {
-    emitPythonNode(nodes[i], parentPath, i);
+    emitBlockNode(nodes[i], parentPath, i);
+  }
+}
+
+// ─── Ruby (.rb) ───
+//
+// Ruby is keyword-delimited: every def/class/module/if/do is closed by a
+// matching `end`. So neither CStyleStmtParser (brace depth) nor
+// PythonIndentParser (indent depth) can read it — but the node *shape*
+// PythonIndentParser produces is exactly right, so this parser emits the same
+// shape and shares emitBlockNode().
+//
+// The traps that break a naive `end` counter, each handled below:
+//   1. modifier form     `return x if y`    — opens nothing
+//   2. assignment form   `x = if cond`      — DOES open
+//   3. heredoc           `<<~SQL … SQL`     — body may contain a bare `end`
+//   4. endless method    `def foo = expr`   — has no `end` (Ruby 3.0+)
+//   5. `=begin`/`=end`   block comment      — body may contain anything
+
+// `?`, `!` and `=` are part of a Ruby method's identity: valid?, valid! and
+// valid= are three different methods. safeName() flattens all three to
+// `valid_`, and mkdir is recursive, so without this encoding they silently
+// merge into one folder. Shared with the coverage audit so it compares the
+// same strings the tree was built from.
+function rubyMethodFolderName(name) {
+  return String(name)
+    .replace(/\?$/, '__q')
+    .replace(/!$/, '__bang')
+    .replace(/=$/, '__eq');
+}
+
+// Blank out string bodies and strip `#` comments so keywords living inside a
+// literal (`:end`, `"end"`, `#{...}`) never move the block depth. Quote state
+// is tracked first, so a `#` inside a string is not read as a comment.
+// ponytail: %w[]/%q() literals and regex literals are not tracked — a `/end/`
+// regex can still miscount. Add a literal scanner if a real file trips it.
+function stripRubyInline(line) {
+  let out = '';
+  let quote = null;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (quote) {
+      if (c === '\\') { out += '  '; i++; continue; }
+      if (c === quote) { quote = null; out += c; continue; }
+      out += ' ';
+      continue;
+    }
+    if (c === '#') break;
+    if (c === '"' || c === "'" || c === '`') { quote = c; out += c; continue; }
+    out += c;
+  }
+  return out;
+}
+
+const RUBY_OPENERS = /^(?:def|class|module|if|unless|while|until|case|for|begin)\b/;
+const RUBY_BRANCH = /^(elsif|else|when|in|rescue|ensure)\b/;
+// `def foo = expr` / `def foo(a) = expr`. The mandatory space before `=`
+// distinguishes it from a setter (`def name=(v)`), where `=` binds to the name.
+const RUBY_ENDLESS_DEF = /^def\s+(?:self\.)?[A-Za-z_][A-Za-z0-9_]*[?!]?\s*(?:\([^)]*\))?\s+=\s/;
+// Heredoc tags: <<~TAG / <<-TAG / <<TAG / <<'TAG'. A bare <<TAG demands an
+// uppercase tag so that `arr <<item` is not mistaken for one.
+const RUBY_HEREDOC = /<<([-~])?(?:(['"])([A-Za-z_][A-Za-z0-9_]*)\2|([A-Z_][A-Z0-9_]*))/g;
+
+// `if`/`unless`/`case`/`begin` sitting in a *value* position open a block just
+// as a leading one does — `x = case env`, `a || if b`, `foo(if c … end)`. The
+// operator must sit immediately before the keyword, which is exactly what keeps
+// the modifier form out: `x = y if z` has an expression in between and must not
+// count. `return` and `then` are deliberately absent, because `return if x` IS
+// a modifier.
+const RUBY_VALUE_OPENERS = [
+  /[^=!<>~]=\s*(?:if|unless|case|begin)\b/g,
+  /(?:\|\||&&|[(,])\s*(?:if|unless|case|begin)\b/g,
+];
+
+// Net block depth contributed by one already-stripped line.
+function rubyBlockDelta(line) {
+  let opens = 0;
+  if (RUBY_OPENERS.test(line) && !RUBY_ENDLESS_DEF.test(line)) opens++;
+  for (const re of RUBY_VALUE_OPENERS) opens += (line.match(re) || []).length;
+  if (/\bdo\s*(?:\|[^|]*\|)?\s*$/.test(line)) opens++;
+  const closes = (line.match(/(?:^|[\s;])end\b/g) || []).length;
+  return opens - closes;
+}
+
+function classifyRubyLine(line) {
+  let m;
+  if (/^class\s*<<\s*/.test(line)) return { kind: 'class', name: 'singleton_class' };
+  if ((m = line.match(/^(class|module)\s+([A-Za-z_][A-Za-z0-9_:]*)/))) {
+    return { kind: m[1], name: m[2].replace(/::/g, '.') };
+  }
+  if ((m = line.match(/^def\s+(?:self\.)?([A-Za-z_][A-Za-z0-9_]*[?!=]?)/))) {
+    return { kind: 'fn', name: rubyMethodFolderName(m[1]) };
+  }
+  if ((m = line.match(RUBY_BRANCH))) return { kind: m[1] === 'in' ? 'when' : m[1], name: '' };
+  if ((m = line.match(/^(if|unless|while|until|case|for|begin)\b/))) return { kind: m[1], name: '' };
+  if (/^return\b/.test(line)) return { kind: 'return', name: '' };
+  if ((m = line.match(/^(@{0,2}[A-Za-z_][A-Za-z0-9_]*)\s*(?:\|\||&&)?=[^=~>]/))) {
+    return { kind: 'var', name: m[1] };
+  }
+  if (/\bdo\s*(?:\|[^|]*\|)?\s*$/.test(line)) return { kind: 'do', name: '' };
+  return { kind: 'stmt', name: '' };
+}
+
+// A bare lowercase call with arguments and no `=`, sitting directly in a
+// class/module body, is a DSL macro (attr_accessor, has_many, validates,
+// before_action, private). That is a structural rule, not a Rails allowlist.
+function classifyRubyMacro(line) {
+  const m = line.match(/^([a-z_][A-Za-z0-9_]*)(?:\s+([^=].*))?$/);
+  if (!m) return null;
+  if (RUBY_OPENERS.test(line) || RUBY_BRANCH.test(line) || /^(end|return|yield|raise|self|super|next|break|redo|retry)\b/.test(line)) return null;
+  if (/[=]/.test(m[2] || '')) {
+    // `validates :name, presence: true` keeps its hash args; `x ||= 1` does not.
+    if (!/^[:'"@A-Z\[]/.test((m[2] || '').trim())) return null;
+  }
+  return { name: m[1], args: (m[2] || '').trim() };
+}
+
+// A heredoc body and a `=begin` block are text, not code. stripNonCode() only
+// knows quote-delimited strings, so Ruby's other two literal forms are removed
+// here before the coverage scan runs — otherwise a `def` written inside a SQL
+// heredoc is reported forever as a symbol the parser missed.
+//
+// This shares RUBY_HEREDOC with the parser on purpose. What the audit must keep
+// independent is *symbol detection* — a `def` matcher blind in the same way as
+// the parser's would catch nothing. Agreeing on which spans are not code is the
+// opposite: divergence there produces gaps that are pure noise.
+function stripRubyNonCodeSpans(text) {
+  const lines = text.split('\n');
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (/^=begin\b/.test(lines[i])) {
+      while (i < lines.length && !/^=end\b/.test(lines[i])) { out.push(''); i++; }
+      if (i < lines.length) { out.push(''); i++; }
+      continue;
+    }
+    const line = lines[i];
+    out.push(line);
+    i++;
+    for (const m of line.matchAll(RUBY_HEREDOC)) {
+      const tag = m[3] || m[4];
+      while (i < lines.length && lines[i].trim() !== tag) { out.push(''); i++; }
+      if (i < lines.length) { out.push(''); i++; }
+    }
+  }
+  return out.join('\n');
+}
+
+class RubyEndParser {
+  constructor(lines) {
+    this.lines = lines;
+    this.i = 0;
+  }
+
+  parse() {
+    const nodes = [];
+    while (this.i < this.lines.length) {
+      nodes.push(...this.parseUntilTerminator());
+      if (this.i >= this.lines.length) break;
+      // An `end` with nothing open means a depth heuristic misfired somewhere
+      // above. Skip that one token and keep reading: mis-nesting one region is
+      // recoverable, while returning here would silently discard every symbol
+      // in the rest of the file — the exact failure the coverage audit exists
+      // to catch, and one no single regex fix can be trusted to prevent.
+      this.i++;
+    }
+    return nodes;
+  }
+
+  // Collects nodes until a line that closes or branches the enclosing block.
+  // The terminator is left unconsumed — the opener that owns it decides.
+  parseUntilTerminator() {
+    const nodes = [];
+    while (this.i < this.lines.length) {
+      const raw = this.lines[this.i];
+      if (/^=begin\b/.test(raw)) {
+        this.i++;
+        while (this.i < this.lines.length && !/^=end\b/.test(this.lines[this.i])) this.i++;
+        this.i++;
+        continue;
+      }
+      const trimmed = stripRubyInline(raw).trim();
+      if (!trimmed) { this.i++; continue; }
+      if (/^end\b/.test(trimmed) || RUBY_BRANCH.test(trimmed)) return nodes;
+      nodes.push(...this.parseNode());
+    }
+    return nodes;
+  }
+
+  // Advance past the bodies of any heredocs opened on this line, so a bare
+  // `end` inside SQL or a template never reaches the depth counter.
+  skipHeredocs(code) {
+    const tags = [...code.matchAll(RUBY_HEREDOC)].map((m) => m[3] || m[4]);
+    for (const tag of tags) {
+      while (this.i < this.lines.length && this.lines[this.i].trim() !== tag) this.i++;
+      if (this.i < this.lines.length) this.i++;
+    }
+  }
+
+  // Returns an array: an if/case opener yields its elsif/else/when siblings
+  // alongside it, matching the flat-sibling shape PythonIndentParser produces.
+  parseNode() {
+    const index = this.i;
+    const code = stripRubyInline(this.lines[this.i]);
+    const trimmed = code.trim();
+    this.i++;
+    this.skipHeredocs(code);
+
+    const info = classifyRubyLine(trimmed);
+    const head = { line: trimmed, index, decorators: [], kind: info.kind, name: info.name, body: [] };
+
+    // A leaf: no block opened, or opened and closed on the same line
+    // (`def foo; end`, `if x then y end`).
+    if (rubyBlockDelta(trimmed) <= 0) return [head];
+
+    // An if/case chain's elsif/else/when are siblings — the same flat shape
+    // PythonIndentParser produces, where indentation makes them siblings. But
+    // a def/class/module rescue/ensure clause is part of that scope's body,
+    // not a sibling of the method, so it nests instead.
+    const isScope = info.kind === 'fn' || info.kind === 'class' || info.kind === 'module';
+    const chain = [head];
+    let cur = head;
+    for (;;) {
+      cur.body = this.parseUntilTerminator();
+      if (this.i >= this.lines.length) break;
+      const t = stripRubyInline(this.lines[this.i]).trim();
+      const branch = t.match(RUBY_BRANCH);
+      if (branch) {
+        this.i++;
+        const node = { line: t, index: this.i - 1, decorators: [], kind: branch[1] === 'in' ? 'when' : branch[1], name: '', body: [] };
+        if (isScope) head.body.push(node);
+        else chain.push(node);
+        cur = node;
+        continue;
+      }
+      if (/^end\b/.test(t)) this.i++;
+      break;
+    }
+    return chain;
   }
 }
 
@@ -1041,6 +1348,47 @@ class QuarkFolderEngine {
     // recorded per file so it can be diffed against what actually got built.
     this.expectedSymbols = [];
     this.filePaths = new Map();
+    this.fileFolders = new Map();
+  }
+
+  // ─── File folder names must be injective ───
+  //
+  // safeName() maps every path separator to `_`, so
+  //   src/admin/user_settings.rb
+  //   src/admin_user/settings.rb
+  // produce the same `file__…` name — and mkdir is recursive, so the second
+  // file's symbols land silently inside the first one's folder. The coverage
+  // audit cannot see it either: it scans the merged folder and finds every
+  // symbol it expected. safeName()'s 100-char truncation collides the same way
+  // on deep trees.
+  //
+  // A path that collides with nothing keeps its exact readable name. When a
+  // group does collide, *every* member takes a digest of its real path, so the
+  // disambiguation is a function of the file set alone and never of the order
+  // files happen to be processed in.
+  planFileFolders(relPaths) {
+    const groups = new Map();
+    for (const rel of relPaths) {
+      const base = `file__${safeName(rel)}`;
+      if (!groups.has(base)) groups.set(base, []);
+      groups.get(base).push(rel);
+    }
+    for (const [base, members] of groups) {
+      for (const rel of members) {
+        const name = members.length === 1
+          ? base
+          : `${base}__${createHash('sha1').update(rel).digest('hex').slice(0, 8)}`;
+        this.fileFolders.set(rel, name);
+      }
+    }
+    const collided = [...groups.values()].filter((m) => m.length > 1);
+    for (const members of collided) {
+      console.log(`[!] 파일 폴더명 충돌 → 경로 해시로 구분: ${members.join(', ')}`);
+    }
+  }
+
+  fileFolderName(relPath) {
+    return this.fileFolders.get(relPath) || `file__${safeName(relPath)}`;
   }
 
   // ─── Symbol coverage audit ───
@@ -1061,7 +1409,21 @@ class QuarkFolderEngine {
     '.py': /^[ \t]*def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/gm,
     '.js': /\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g,
     '.mjs': /\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g,
+    '.cjs': /\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g,
     '.ts': /\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g,
+    '.rb': /^[ \t]*def\s+(?:self\.)?([A-Za-z_][A-Za-z0-9_]*[?!=]?)/gm,
+  };
+
+  // A language whose method names carry characters safeName() flattens must
+  // declare the encoding here, or the audit reports gaps that are not real:
+  // the tree holds `valid__q` while the scan saw `valid?`.
+  static FOLDER_NAME_ENCODERS = {
+    '.rb': rubyMethodFolderName,
+  };
+
+  // Language-specific non-code spans stripNonCode() cannot see on its own.
+  static SOURCE_PRE_STRIPS = {
+    '.rb': stripRubyNonCodeSpans,
   };
 
   // Strip line/block comments and string bodies so a `fn` inside prose or a
@@ -1079,9 +1441,10 @@ class QuarkFolderEngine {
     const pattern = QuarkFolderEngine.NAIVE_SYMBOL_SCANS[ext];
     if (!pattern) return; // no independent scan for this language yet
     const names = new Set();
-    const code = QuarkFolderEngine.stripNonCode(text);
+    const preStrip = QuarkFolderEngine.SOURCE_PRE_STRIPS[ext];
+    const code = QuarkFolderEngine.stripNonCode(preStrip ? preStrip(text) : text);
     for (const match of code.matchAll(pattern)) names.add(match[1]);
-    if (names.size) this.expectedSymbols.push({ relPath, fileFolderName, names });
+    if (names.size) this.expectedSymbols.push({ relPath, fileFolderName, names, ext });
   }
 
   auditSymbolCoverage() {
@@ -1100,7 +1463,11 @@ class QuarkFolderEngine {
     const gaps = [];
     for (const file of this.expectedSymbols) {
       const built = collectFnNames(path.join(this.quarkDir, file.fileFolderName));
-      const missing = [...file.names].filter((name) => !built.has(safeName(name)) && !built.has(name));
+      const encode = QuarkFolderEngine.FOLDER_NAME_ENCODERS[file.ext] || ((n) => n);
+      const missing = [...file.names].filter((name) => {
+        const folder = encode(name);
+        return !built.has(safeName(folder)) && !built.has(folder);
+      });
       expected += file.names.size;
       matched += file.names.size - missing.length;
       if (missing.length) gaps.push({ relPath: file.relPath, missing });
@@ -1128,7 +1495,7 @@ class QuarkFolderEngine {
     // A compiled artifact is not text, and reading it as UTF-8 would corrupt it
     // before we ever get to look. Sniff the ELF magic from the raw bytes first.
     if (isElfFile(absPath)) {
-      const binFolderName = `binary__${safeName(relPath)}`;
+      const binFolderName = this.fileFolderName(relPath).replace(/^file__/, 'binary__');
       const binQuarkPath = path.join(this.quarkDir, binFolderName);
       mkdirSync(binQuarkPath);
       this.processElf(absPath, binQuarkPath, relPath);
@@ -1138,7 +1505,7 @@ class QuarkFolderEngine {
     const text = fs.readFileSync(absPath, 'utf-8');
     const lines = text.split('\n');
     const ext = path.extname(absPath);
-    const fileFolderName = `file__${safeName(relPath)}`;
+    const fileFolderName = this.fileFolderName(relPath);
     this.filePaths.set(fileFolderName, relPath);
     const fileQuarkPath = path.join(this.quarkDir, fileFolderName);
     mkdirSync(fileQuarkPath);
@@ -1148,6 +1515,7 @@ class QuarkFolderEngine {
     if (ext === '.metal') { this.processMetal(text, fileQuarkPath, relPath); return; }
     if (ext === '.m' || ext === '.mm') { this.processObjC(text, fileQuarkPath, relPath); return; }
     if (ext === '.py') { this.processPython(text, fileQuarkPath, relPath); return; }
+    if (ext === '.rb') { this.processRuby(text, fileQuarkPath, relPath); return; }
 
     // Zig / .cu / .cuh — symbol detection + recursive fn body for Zig
     this.processCStyle(text, lines, ext, fileQuarkPath, relPath);
@@ -1216,7 +1584,7 @@ class QuarkFolderEngine {
     const parser = new PythonIndentParser(lines);
     const nodes = parser.parse();
 
-    emitPythonList(nodes, fileQuarkPath);
+    emitBlockList(nodes, fileQuarkPath);
 
     const registerMirrorsRecursively = (n) => {
       if (n.kind === 'class') {
@@ -1230,6 +1598,67 @@ class QuarkFolderEngine {
       }
     };
     for (const n of nodes) registerMirrorsRecursively(n);
+  }
+
+  processRuby(text, fileQuarkPath, relPath) {
+    const nodes = new RubyEndParser(text.split('\n')).parse();
+
+    // A bare call is only a DSL macro where it sits in a class/module body —
+    // the same line inside a method is an ordinary call. Reclassify with that
+    // context in hand, before the tree is materialized.
+    const markMacros = (list, inScope) => {
+      // A class declaring `before_action` twice is ordinary Rails, and mkdir is
+      // recursive — so without a per-scope occurrence suffix the second call's
+      // arguments silently land in the first one's folder.
+      const seen = new Map();
+      for (const n of list) {
+        if (inScope && n.kind === 'stmt' && n.body.length === 0) {
+          const macro = classifyRubyMacro(n.line);
+          if (macro) {
+            const nth = (seen.get(macro.name) || 0) + 1;
+            seen.set(macro.name, nth);
+            n.kind = 'annotation';
+            n.name = nth === 1 ? macro.name : `${macro.name}__${nth}`;
+            n.args = macro.args;
+          }
+        }
+        if (n.body.length) markMacros(n.body, n.kind === 'class' || n.kind === 'module');
+      }
+    };
+    markMacros(nodes, false);
+
+    emitBlockList(nodes, fileQuarkPath);
+
+    // A Ruby method name rarely carries its own role — `index`, `call` and
+    // `perform` say nothing. The enclosing class does (`PostsController`,
+    // `BriefDeliveryJob`), and failing that the path does (`app/workers/…`).
+    // Ask each in turn instead of filing every method under 'general'.
+    const roleFor = (...candidates) => {
+      for (const c of candidates) {
+        if (!c) continue;
+        const role = guessRole(c);
+        if (role !== 'general') return role;
+      }
+      return 'general';
+    };
+
+    const registerRecursively = (list, parentPath, scopeName) => {
+      for (const n of list) {
+        let dir = null;
+        if (n.kind === 'class' || n.kind === 'module') {
+          dir = path.join(parentPath, `${n.kind}__${safeName(n.name)}`);
+          this.registerMirror(n.kind, 'type', relPath, path.relative(this.quarkDir, dir));
+        } else if (n.kind === 'fn') {
+          dir = path.join(parentPath, `fn__${safeName(n.name)}`);
+          this.registerMirror('fn', roleFor(n.name, scopeName, relPath), relPath, path.relative(this.quarkDir, dir));
+        }
+        if (dir && n.body.length) {
+          const isScope = n.kind === 'class' || n.kind === 'module';
+          registerRecursively(n.body, dir, isScope ? n.name : scopeName);
+        }
+      }
+    };
+    registerRecursively(nodes, fileQuarkPath, '');
   }
 
   // ─── Zig / CUDA C++ (.cu/.cuh) ───
@@ -1276,7 +1705,7 @@ class QuarkFolderEngine {
           let fields = [];
           if (ext === '.java') {
             fields = parseJavaFields(inner);
-          } else if (ext === '.ts' || ext === '.js' || ext === '.tsx' || ext === '.jsx') {
+          } else if (JS_FAMILY_EXTENSIONS.has(ext)) {
             fields = parseJSFields(inner);
           } else {
             fields = parseZigStructFields(inner);
@@ -1378,7 +1807,7 @@ class QuarkFolderEngine {
           } else if ((m = line.match(/^\s*(?:public\s+|protected\s+|private\s+|static\s+|final\s+|transient\s+|volatile\s+)*[a-zA-Z0-9_<>\[\]]+\s+([a-zA-Z0-9_]+)\s*(?:=|;)/))) {
             name = m[1]; kind = 'var'; role = 'state';
           }
-        } else if (ext === '.ts' || ext === '.js' || ext === '.tsx' || ext === '.jsx') {
+        } else if (JS_FAMILY_EXTENSIONS.has(ext)) {
           const trimmed = line.trim();
           if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*') || trimmed.length === 0 || trimmed.startsWith('import ') || trimmed.startsWith('export *')) {
           } else if ((m = line.match(/^\s*(?:export\s+)?(class|interface)\s+([a-zA-Z0-9_]+)/))) {
@@ -2468,6 +2897,7 @@ async function main() {
 
   const engine = new QuarkFolderEngine(CONFIG.outDir);
   engine.init();
+  engine.planFileFolders(resolvedFiles);
 
   for (const rel of resolvedFiles) {
     const abs = validateSourceFilePath(srcRoot, rel);
