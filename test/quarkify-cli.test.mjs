@@ -70,7 +70,7 @@ test('CLI materializes quark output, mirrors, axons, and guide artifacts', async
   });
 });
 
-test('generated HTML viewer does not load remote scripts by default', async () => {
+test('generated HTML viewer is offline and limits graph rendering', async () => {
   await withTempWorkspace(async (tmp) => {
     const srcDir = path.join(tmp, 'src');
     const outDir = path.join(tmp, 'out');
@@ -92,7 +92,24 @@ test('generated HTML viewer does not load remote scripts by default', async () =
     const html = await readFile(path.join(outDir, 'index.html'), 'utf8');
     assert.doesNotMatch(html, new RegExp(String.raw`<script\s+src=["']https?://`, 'i'));
     assert.doesNotMatch(html, /cdn\.tailwindcss\.com|d3js\.org/i);
-    assert.match(html, /class="sidebar glass-panel"/);
+    assert.match(html, /<canvas id="graph"/);
+    assert.match(html, /id="overview" class="active"/);
+    assert.match(html, /id="explore"/);
+    assert.match(html, /function renderOverview\(\)/);
+    assert.match(html, /function renderExplore\(\)/);
+    assert.match(html, /const depths = new Uint16Array/);
+    assert.match(html, /id="zoom-in"/);
+    assert.match(html, /How to read/);
+    assert.match(html, /addEventListener\('wheel'/);
+    assert.match(html, /let nearest=-1, distance=Infinity/);
+    assert.match(html, /const MAX_VISIBLE = 120/);
+    assert.match(html, /"parent":-1/);
+    assert.match(html, /"type":"project"/);
+    assert.match(html, /<strong>\d+<\/strong><span>Total nodes/);
+    assert.doesNotMatch(html, /\$\{graphData\./);
+    assert.match(html, /search\.value = ''; typeFilter\.value = ''/);
+    assert.match(html, /const global = query \|\| type/);
+    assert.doesNotMatch(html, /createElementNS|<svg/);
     assert.doesNotMatch(html, /class="[^"]*(?:w-screen|h-screen|grid-cols-2)[^"]*"/);
   });
 });

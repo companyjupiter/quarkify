@@ -1040,6 +1040,7 @@ class QuarkFolderEngine {
     // Symbol coverage audit: what a deliberately naive scan expects to find,
     // recorded per file so it can be diffed against what actually got built.
     this.expectedSymbols = [];
+    this.filePaths = new Map();
   }
 
   // ─── Symbol coverage audit ───
@@ -1114,7 +1115,7 @@ class QuarkFolderEngine {
     // history. (Pre-v7 this rmSync'd the whole outDir, which would nuke the
     // ledger on the next regen; that folder collision is what v7 fixes.)
     for (const d of [this.quarkDir, this.mirrorDir, this.axonDir]) {
-      if (fs.existsSync(d)) fs.rmSync(d, { recursive: true });
+      if (fs.existsSync(d)) fs.rmSync(d, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
     }
     mkdirSync(this.outputDir);
     fs.writeFileSync(path.join(this.outputDir, OUTPUT_MARKER), 'quarkify output directory\n', 'utf-8');
@@ -1138,6 +1139,7 @@ class QuarkFolderEngine {
     const lines = text.split('\n');
     const ext = path.extname(absPath);
     const fileFolderName = `file__${safeName(relPath)}`;
+    this.filePaths.set(fileFolderName, relPath);
     const fileQuarkPath = path.join(this.quarkDir, fileFolderName);
     mkdirSync(fileQuarkPath);
     this.recordExpectedSymbols(text, ext, relPath, fileFolderName);
@@ -1949,20 +1951,30 @@ class QuarkFolderEngine {
 
   collectTopologyGraphData() {
     const nodes = [];
-    const links = [];
-    const idMap = new Set();
+    const idMap = new Map();
+    const directoryMap = new Map();
 
-    const addNode = (id, label, type, val = 1) => {
-      if (idMap.has(id)) return;
-      idMap.add(id);
-      nodes.push({ id, label, type, val });
+    const addNode = (id, label, type, val = 1, parent = -1) => {
+      if (idMap.has(id)) return idMap.get(id);
+      const index = nodes.length;
+      idMap.set(id, index);
+      nodes.push({ id, label, type, val, parent });
+      return index;
     };
 
-    const addLink = (source, target, value = 1) => {
-      links.push({ source, target, value });
+    const project = addNode('project::root', CONFIG.name, 'project', 12);
+    const directoryParent = (relPath) => {
+      const parts = path.dirname(relPath).split(path.sep).filter((part) => part && part !== '.');
+      let parent = project, current = '';
+      for (const part of parts) {
+        current = current ? path.join(current, part) : part;
+        if (!directoryMap.has(current)) directoryMap.set(current, addNode(`directory::${current}`, part, 'directory', 9, parent));
+        parent = directoryMap.get(current);
+      }
+      return parent;
     };
 
-    const scanDir = (currPath, parentId = null) => {
+    const scanDir = (currPath, parent = project, topLevel = false) => {
       if (!fs.existsSync(currPath)) return;
       const entries = fs.readdirSync(currPath, { withFileTypes: true });
       for (const entry of entries) {
@@ -1974,7 +1986,7 @@ class QuarkFolderEngine {
 
         let type = 'generic_stmt';
         let label = entry.name;
-        if (entry.name.startsWith('file__')) { type = 'file'; label = entry.name.replace('file__', ''); }
+        if (entry.name.startsWith('file__')) { type = 'file'; label = this.filePaths.get(entry.name) || entry.name.replace('file__', ''); }
         else if (entry.name.startsWith('class__')) { type = 'class'; label = entry.name.replace('class__', ''); }
         else if (entry.name.startsWith('interface__')) { type = 'interface'; label = entry.name.replace('interface__', ''); }
         else if (entry.name.startsWith('struct__')) { type = 'struct'; label = entry.name.replace('struct__', ''); }
@@ -1988,18 +2000,14 @@ class QuarkFolderEngine {
         else if (entry.name.startsWith('catch__') || entry.name.startsWith('catch___')) { type = 'catch'; }
 
         const sizeVal = type === 'file' ? 10 : type === 'class' ? 8 : type === 'function' ? 6 : type === 'annotation' ? 5 : 3;
-        addNode(nodeId, label, type, sizeVal);
-
-        if (parentId) {
-          addLink(parentId, nodeId);
-        }
-
-        scanDir(fullPath, nodeId);
+        const nodeParent = topLevel && type === 'file' ? directoryParent(label) : parent;
+        const index = addNode(nodeId, label, type, sizeVal, nodeParent);
+        scanDir(fullPath, index);
       }
     };
 
-    scanDir(this.quarkDir);
-    return { nodes, links };
+    scanDir(this.quarkDir, project, true);
+    return { nodes, linkCount: nodes.filter((node) => node.parent >= 0).length };
   }
 
   writeHtmlViewer() {
@@ -2009,201 +2017,226 @@ class QuarkFolderEngine {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Quarkify v1.0.0 Topology Viewer - ${CONFIG.name}</title>
+    <title>Quarkify v1.0.0 Explorer - ${CONFIG.name}</title>
     <style>
-        body {
-            background-color: #0b0f19;
-            color: #e2e8f0;
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            height: 100vh;
-            margin: 0;
-            overflow: hidden;
-            position: relative;
-        }
         * { box-sizing: border-box; }
-        .sidebar {
-            border-radius: 1rem;
-            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.35);
-            display: flex;
-            flex-direction: column;
-            height: calc(100vh - 2rem);
-            justify-content: space-between;
-            margin: 1rem;
-            padding: 1.5rem;
-            position: relative;
-            width: 20rem;
-            z-index: 1;
-        }
-        .glass-panel {
-            background: rgba(15, 23, 42, 0.65);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-        }
-        .title { color: #c084fc; font-size: 1.25rem; font-weight: 700; margin: 0; }
-        .subtitle, .label { color: #64748b; font-size: 0.75rem; }
-        .subtitle { margin: 0.25rem 0 0; }
-        .divider { background: #334155; height: 1px; margin: 1rem 0; opacity: 0.7; }
-        .stats { display: grid; gap: 0.75rem; }
-        .label, .value { display: block; }
-        .value { color: #e2e8f0; font-size: 0.875rem; font-weight: 600; }
-        .value-indigo { color: #818cf8; }
-        .value-purple { color: #c084fc; }
-        .legend-title { color: #64748b; font-size: 0.75rem; margin: 0 0 0.5rem; text-transform: uppercase; }
-        .legend-grid { display: grid; font-size: 0.75rem; gap: 0.5rem; grid-template-columns: 1fr 1fr; }
-        .legend-item { align-items: center; color: #cbd5e1; display: flex; gap: 0.375rem; }
-        .legend-dot { border-radius: 50%; height: 0.625rem; width: 0.625rem; }
-        .details { background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(30, 41, 59, 0.6); border-radius: 0.75rem; padding: 0.75rem; }
-        .selected-name { color: #cbd5e1; display: block; font-size: 0.875rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .selected-type { color: #818cf8; display: block; font-size: 0.75rem; margin-top: 0.25rem; }
-        #graph-container { height: 100%; inset: 0; position: absolute; width: 100%; }
-        .node:hover {
-            cursor: pointer;
-            filter: brightness(1.3);
-        }
-        .link {
-            stroke: rgba(255, 255, 255, 0.06);
-            stroke-opacity: 0.6;
-        }
-        .color-file { fill: #38bdf8; }
-        .color-class { fill: #a855f7; }
-        .color-interface { fill: #c084fc; }
-        .color-struct { fill: #818cf8; }
-        .color-function { fill: #f43f5e; }
-        .color-field { fill: #10b981; }
-        .color-var { fill: #34d399; }
-        .color-annotation { fill: #fbbf24; }
-        .color-control_stmt { fill: #64748b; }
-        .color-api_call { fill: #f472b6; }
-        .color-condition { fill: #06b6d4; }
-        .color-catch { fill: #f97316; }
-        .color-default { fill: #94a3b8; }
-        @media (max-width: 700px) {
-            .sidebar { height: auto; max-height: calc(100vh - 2rem); overflow: auto; width: calc(100% - 2rem); }
-        }
+        :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+        body { background: #080c14; color: #e5e7eb; height: 100vh; margin: 0; overflow: hidden; }
+        button, input, select { background: #111827; border: 1px solid #334155; border-radius: .5rem; color: inherit; font: inherit; padding: .6rem .75rem; }
+        button { cursor: pointer; } button:hover, button:focus-visible, input:focus-visible, select:focus-visible { border-color: #818cf8; outline: none; }
+        button.active { background: #4f46e5; border-color: #818cf8; }
+        .app { display: grid; grid-template-columns: 19rem 1fr; height: 100%; }
+        .sidebar { background: #0f172a; border-right: 1px solid #1e293b; display: flex; flex-direction: column; gap: 1rem; overflow: auto; padding: 1.25rem; }
+        .title { color: #c084fc; font-size: 1.2rem; margin: 0; } .subtitle, .muted { color: #94a3b8; font-size: .78rem; }
+        .subtitle { margin: .2rem 0 0; } .controls { display: grid; gap: .6rem; } .controls input { width: 100%; }
+        .stats { display: grid; gap: .5rem; grid-template-columns: 1fr 1fr; }
+        .stat, .details { background: #111827; border: 1px solid #1e293b; border-radius: .65rem; padding: .75rem; }
+        .help { background: #111827; border: 1px solid #1e293b; border-radius: .65rem; color: #94a3b8; font-size: .72rem; line-height: 1.5; padding: .75rem; }
+        .help strong { color: #e2e8f0; display: block; margin-bottom: .3rem; }
+        .stat strong { display: block; font-size: 1.05rem; } .stat span { color: #94a3b8; font-size: .72rem; }
+        .details { margin-top: auto; overflow-wrap: anywhere; } .details strong { display: block; margin: .25rem 0; }
+        .workspace { display: grid; grid-template-rows: auto 1fr; min-width: 0; }
+        .toolbar { align-items: center; border-bottom: 1px solid #1e293b; display: flex; gap: .75rem; min-height: 3.5rem; padding: .7rem 1rem; }
+        #breadcrumb { color: #cbd5e1; font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        #graph-container { min-height: 0; position: relative; } canvas { cursor: grab; display: block; height: 100%; width: 100%; } canvas.dragging { cursor: grabbing; }
+        #status { margin-left: auto; white-space: nowrap; }
+        .legend { display: flex; flex-wrap: wrap; gap: .55rem; } .legend span { color: #94a3b8; font-size: .7rem; }
+        .dot { border-radius: 50%; display: inline-block; height: .55rem; margin-right: .25rem; width: .55rem; }
+        @media (max-width: 720px) { .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; } .sidebar { border-bottom: 1px solid #1e293b; border-right: 0; max-height: 15rem; } }
     </style>
 </head>
 <body>
-
-    <aside class="sidebar glass-panel">
-        <div>
+  <main class="app">
+    <aside class="sidebar">
+        <header>
             <h1 class="title">Quarkify v1.0.0 ⚛️</h1>
-            <p class="subtitle">Topology Graph Visualizer</p>
-            
-            <div class="divider"></div>
-            
-            <div class="stats">
-                <div>
-                    <span class="label">Project Name</span>
-                    <span class="value">${CONFIG.name}</span>
-                </div>
-                <div>
-                    <span class="label">Total Nodes</span>
-                    <span class="value value-indigo">\${graphData.nodes.length}</span>
-                </div>
-                <div>
-                    <span class="label">Total Links</span>
-                    <span class="value value-purple">\${graphData.links.length}</span>
-                </div>
-            </div>
-            
-            <div class="divider"></div>
-            
-            <h2 class="legend-title">Legend</h2>
-            <div class="legend-grid">
-                <div class="legend-item"><span class="legend-dot color-file"></span>File</div>
-                <div class="legend-item"><span class="legend-dot color-class"></span>Class</div>
-                <div class="legend-item"><span class="legend-dot color-function"></span>Method</div>
-                <div class="legend-item"><span class="legend-dot color-annotation"></span>Annotation</div>
-                <div class="legend-item"><span class="legend-dot color-field"></span>Field/Var</div>
-                <div class="legend-item"><span class="legend-dot color-control_stmt"></span>Control Stmt</div>
-                <div class="legend-item"><span class="legend-dot color-api_call"></span>API Call</div>
-                <div class="legend-item"><span class="legend-dot color-condition"></span>Condition</div>
-            </div>
+            <p class="subtitle">${CONFIG.name}</p>
+        </header>
+        <div class="stats">
+          <div class="stat"><strong>${graphData.nodes.length}</strong><span>Total nodes</span></div>
+          <div class="stat"><strong>${graphData.linkCount}</strong><span>Total links</span></div>
         </div>
-        
-        <div class="details" id="details">
-            <span class="label">Selected Node</span>
-            <span class="selected-name" id="node-name">None (Click a node)</span>
-            <span class="selected-type" id="node-type">-</span>
+        <div class="controls">
+          <label class="muted" for="search">Search all nodes</label>
+          <input id="search" type="search" placeholder="File, class, function…" autocomplete="off">
+          <label class="muted" for="type-filter">Node type</label>
+          <select id="type-filter"><option value="">All types</option></select>
         </div>
+        <div class="legend" id="legend"></div>
+        <div class="help"><strong>How to read</strong>중앙에서 바깥쪽으로 Project → Directory → File → Class/Function → Statement 순서입니다.<br>선은 부모–자식 포함 관계입니다.<br>클릭: 정보 · 더블클릭: 상세 탐색<br>휠: 확대/축소 · 드래그: 이동</div>
+        <div class="details"><span class="muted">Selected node</span><strong id="node-name">None</strong><span class="muted" id="node-type">Click a node to inspect it.</span></div>
     </aside>
-
-    <div id="graph-container"></div>
+    <section class="workspace">
+      <div class="toolbar"><button id="overview" class="active" type="button">Overview</button><button id="explore" type="button">Explore</button><button id="back" type="button" disabled>← Back</button><button id="zoom-out" type="button" aria-label="Zoom out">−</button><button id="zoom-reset" type="button">100%</button><button id="zoom-in" type="button" aria-label="Zoom in">+</button><span id="breadcrumb">Full topology</span><span id="status" aria-live="polite"></span></div>
+      <div id="graph-container"><canvas id="graph" tabindex="0" role="img" aria-label="Code topology graph"></canvas></div>
+    </section>
+  </main>
 
     <script>
         const data = ${JSON.stringify(graphData)};
-        
-        const container = document.getElementById('graph-container');
-        const width = container.clientWidth;
-        const height = container.clientHeight;
-        
-        const svgNS = "http://www.w3.org/2000/svg";
-        const svg = document.createElementNS(svgNS, "svg");
-        svg.setAttribute("width", "100%");
-        svg.setAttribute("height", "100%");
-        svg.setAttribute("viewBox", [0, 0, width, height].join(" "));
-        container.appendChild(svg);
+        const colors = { project:'#f8fafc', directory:'#22d3ee', file:'#38bdf8', class:'#a855f7', interface:'#c084fc', struct:'#818cf8', function:'#f43f5e', field:'#10b981', var:'#34d399', annotation:'#fbbf24', control_stmt:'#64748b', api_call:'#f472b6', condition:'#06b6d4', catch:'#f97316', generic_stmt:'#94a3b8' };
+        const children = Array.from({ length: data.nodes.length }, () => []);
+        const roots = [];
+        data.nodes.forEach((node, index) => node.parent < 0 ? roots.push(index) : children[node.parent].push(index));
+        const canvas = document.getElementById('graph');
+        const context = canvas.getContext('2d');
+        const search = document.getElementById('search');
+        const typeFilter = document.getElementById('type-filter');
+        const back = document.getElementById('back');
+        const overviewButton = document.getElementById('overview');
+        const exploreButton = document.getElementById('explore');
+        const breadcrumb = document.getElementById('breadcrumb');
+        const status = document.getElementById('status');
+        const zoomReset = document.getElementById('zoom-reset');
+        let mode = 'overview', focus = roots[0] ?? -1, selected = focus, hits = [], visibleTotal = 0;
+        let scale = 1, offsetX = 0, offsetY = 0, dragStart = null, dragged = false, renderFrame = 0;
+        let overviewXs = null, overviewYs = null;
+        const MAX_VISIBLE = 120;
+        const nodesByType = new Map();
+        data.nodes.forEach((node, index) => { if (!nodesByType.has(node.type)) nodesByType.set(node.type, []); nodesByType.get(node.type).push(index); });
 
-        const radius = Math.max(120, Math.min(width, height) * 0.36);
-        const centerX = width / 2;
-        const centerY = height / 2;
-        const positions = new Map();
-        data.nodes.forEach((node, index) => {
-            const angle = (Math.PI * 2 * index) / Math.max(data.nodes.length, 1);
-            positions.set(node.id, {
-                x: centerX + Math.cos(angle) * radius,
-                y: centerY + Math.sin(angle) * radius,
-            });
-        });
+        [...new Set(data.nodes.map((node) => node.type))].sort().forEach((type) => typeFilter.add(new Option(type.replaceAll('_', ' '), type)));
+        search.value = ''; typeFilter.value = '';
+        document.getElementById('legend').innerHTML = ['directory','file','class','function','var','api_call'].map((type) => '<span><i class="dot" style="background:'+colors[type]+'"></i>'+type.replaceAll('_',' ')+'</span>').join('');
 
-        for (const link of data.links) {
-            const source = positions.get(typeof link.source === "string" ? link.source : link.source.id);
-            const target = positions.get(typeof link.target === "string" ? link.target : link.target.id);
-            if (!source || !target) continue;
-            const line = document.createElementNS(svgNS, "line");
-            line.setAttribute("x1", source.x);
-            line.setAttribute("y1", source.y);
-            line.setAttribute("x2", target.x);
-            line.setAttribute("y2", target.y);
-            line.setAttribute("class", "link");
-            svg.appendChild(line);
-        }
-
-        for (const node of data.nodes) {
-            const pos = positions.get(node.id);
-            const circle = document.createElementNS(svgNS, "circle");
-            circle.setAttribute("cx", pos.x);
-            circle.setAttribute("cy", pos.y);
-            circle.setAttribute("r", node.val + 2);
-            circle.setAttribute("class", "node color-" + (node.type || "default"));
-            circle.addEventListener("click", () => {
-                document.getElementById("node-name").innerText = node.label;
-                document.getElementById("node-type").innerText = "Type: " + node.type.toUpperCase() + " | ID: " + node.id;
-                for (const el of svg.querySelectorAll("circle")) {
-                    el.setAttribute("r", el === circle ? node.val + 8 : Number(el.dataset.baseRadius));
-                }
-            });
-            circle.dataset.baseRadius = String(node.val + 2);
-            svg.appendChild(circle);
-
-            if (["file", "class", "function", "annotation"].includes(node.type)) {
-                const label = document.createElementNS(svgNS, "text");
-                label.setAttribute("x", pos.x);
-                label.setAttribute("y", pos.y - 10);
-                label.setAttribute("text-anchor", "middle");
-                label.setAttribute("fill", "#94a3b8");
-                label.setAttribute("font-size", "10px");
-                label.textContent = node.label;
-                svg.appendChild(label);
+        function visibleNodes() {
+          const query = search.value.trim().toLowerCase();
+          const type = typeFilter.value;
+          const global = query || type;
+          const source = global ? data.nodes : (focus < 0 ? roots : [focus, ...children[focus]]);
+          const visible = [];
+          visibleTotal = 0;
+          for (let position = 0; position < source.length; position++) {
+            const index = global ? position : source[position], node = data.nodes[index];
+            if ((!query || node.label.toLowerCase().includes(query)) && (!type || node.type === type)) {
+              visibleTotal++;
+              if (visible.length < MAX_VISIBLE) visible.push(index);
             }
+          }
+          return visible;
         }
+
+        function prepareCanvas() {
+          const rect = canvas.getBoundingClientRect(), ratio = devicePixelRatio || 1;
+          canvas.width = Math.max(1, Math.round(rect.width * ratio)); canvas.height = Math.max(1, Math.round(rect.height * ratio));
+          context.setTransform(ratio, 0, 0, ratio, 0, 0); context.clearRect(0, 0, rect.width, rect.height); hits = [];
+          context.setTransform(ratio*scale, 0, 0, ratio*scale, ratio*offsetX, ratio*offsetY);
+          return rect;
+        }
+
+        function renderOverview() {
+          const rect = prepareCanvas(), total = data.nodes.length;
+          const centerX = rect.width/2, centerY = rect.height/2, radius = Math.max(120, Math.min(rect.width,rect.height)*.44);
+          const xs = new Float32Array(total), ys = new Float32Array(total);
+          const depths = new Uint16Array(total); let maxDepth = 1;
+          for (let index=0; index<total; index++) { const parent=data.nodes[index].parent; depths[index]=parent<0?0:depths[parent]+1; if(depths[index]>maxDepth) maxDepth=depths[index]; }
+          for (let index=0; index<total; index++) { const angle=Math.PI*2*index/total, distance=radius*depths[index]/maxDepth; xs[index]=centerX+Math.cos(angle)*distance; ys[index]=centerY+Math.sin(angle)*distance; }
+          overviewXs=xs; overviewYs=ys;
+          context.strokeStyle='rgba(148,163,184,.16)'; context.lineWidth=.65; context.beginPath();
+          for (let index=0; index<total; index++) {
+            const parent=data.nodes[index].parent; if(parent<0) continue;
+            context.moveTo(xs[parent],ys[parent]); context.lineTo(xs[index],ys[index]);
+            if(index%5000===0) { context.stroke(); context.beginPath(); }
+          }
+          context.stroke();
+          for (const [type,indexes] of nodesByType) { context.fillStyle=colors[type]||colors.generic_stmt; for(const index of indexes) context.fillRect(xs[index]-1,ys[index]-1,2,2); }
+          if (selected>=0) { context.beginPath(); context.arc(xs[selected],ys[selected],7,0,Math.PI*2); context.fillStyle=colors[data.nodes[selected].type]||'#fff'; context.fill(); context.strokeStyle='#fff'; context.stroke(); context.fillStyle='#fff'; context.font='12px system-ui'; context.fillText(data.nodes[selected].label,xs[selected]+10,ys[selected]-8); }
+          back.disabled=true; breadcrumb.textContent='Full topology'; status.textContent=total+' nodes · '+data.linkCount+' links';
+        }
+
+        function renderExplore() {
+          let visible = visibleNodes();
+          const rect = prepareCanvas();
+          const rowCapacity = Math.max(1, Math.floor((rect.height - 40) / 46));
+          const columnCapacity = Math.max(1, Math.floor((rect.width - 250) / 210));
+          visible = visible.slice(0, rowCapacity * columnCapacity + 1);
+          const centered = focus >= 0 && visible.includes(focus) && !search.value && !typeFilter.value;
+          const others = centered ? visible.filter((index) => index !== focus) : visible;
+          const positions = new Map();
+          if (centered) positions.set(focus, { x: 90, y: rect.height / 2 });
+          const rows = rowCapacity;
+          const columns = Math.max(1, Math.ceil(others.length / rows));
+          others.forEach((index, position) => positions.set(index, {
+            x: centered ? 280 + Math.floor(position / rows) * Math.max(210, (rect.width - 320) / columns) : 40 + Math.floor(position / rows) * 230,
+            y: 30 + (position % rows) * 46,
+          }));
+          if (centered) {
+            context.strokeStyle = 'rgba(148,163,184,.25)'; context.lineWidth = 1;
+            for (const index of others) { const point = positions.get(index); context.beginPath(); context.moveTo(102, rect.height/2); context.lineTo(point.x-12, point.y); context.stroke(); }
+          }
+          for (const index of visible) {
+            const node = data.nodes[index], point = positions.get(index); if (!point) continue;
+            const radius = index === selected ? 11 : 8;
+            context.beginPath(); context.arc(point.x, point.y, radius, 0, Math.PI*2); context.fillStyle = colors[node.type] || colors.generic_stmt; context.fill();
+            if (index === selected) { context.strokeStyle = '#fff'; context.lineWidth = 2; context.stroke(); }
+            context.fillStyle = '#e2e8f0'; context.font = (index === focus ? '600 ' : '') + '12px system-ui'; context.textAlign = 'left';
+            context.fillText(node.label.length > 30 ? node.label.slice(0,29)+'…' : node.label, point.x + 14, point.y + 4);
+            hits.push({ index, x: point.x, y: point.y, radius: 14 });
+          }
+          status.textContent = visible.length < visibleTotal ? 'Showing '+visible.length+' of '+visibleTotal+' nodes — refine the search.' : visibleTotal+' nodes shown';
+          back.disabled = focus < 0 || data.nodes[focus].parent < 0; breadcrumb.textContent = focus < 0 ? 'Project' : data.nodes[focus].id.replace(/^(quark|directory|project)::/,'').replaceAll('/', ' › ');
+        }
+
+        function render() {
+          overviewButton.classList.toggle('active',mode==='overview'); exploreButton.classList.toggle('active',mode==='explore');
+          zoomReset.textContent=Math.round(scale*100)+'%';
+          mode === 'overview' ? renderOverview() : renderExplore();
+        }
+
+        function scheduleRender() { if(!renderFrame) renderFrame=requestAnimationFrame(()=>{renderFrame=0;render();}); }
+
+        function screenPoint(event) {
+          const rect=canvas.getBoundingClientRect();
+          return { x:(event.clientX-rect.left-offsetX)/scale, y:(event.clientY-rect.top-offsetY)/scale, screenX:event.clientX-rect.left, screenY:event.clientY-rect.top };
+        }
+
+        function zoomTo(nextScale, x=canvas.clientWidth/2, y=canvas.clientHeight/2) {
+          nextScale=Math.min(8,Math.max(.25,nextScale));
+          const worldX=(x-offsetX)/scale, worldY=(y-offsetY)/scale;
+          offsetX=x-worldX*nextScale; offsetY=y-worldY*nextScale; scale=nextScale; scheduleRender();
+        }
+
+        function resetView() { scale=1; offsetX=0; offsetY=0; render(); }
+
+        function showDetails(index) {
+          selected=index; const node=data.nodes[index];
+          document.getElementById('node-name').textContent=node.label;
+          document.getElementById('node-type').textContent=node.type.replaceAll('_',' ')+' · '+children[index].length+' children · '+node.id.replace('quark::','');
+        }
+
+        function choose(index) {
+          showDetails(index); const node=data.nodes[index];
+          if (children[index].length) { focus=index; search.value=''; typeFilter.value=''; }
+          render();
+        }
+        canvas.addEventListener('click', (event) => {
+          if(dragged) return; const rect=canvas.getBoundingClientRect(), point=screenPoint(event), x=point.x, y=point.y;
+          if (mode==='overview') {
+            let angle=Math.atan2(y-rect.height/2,x-rect.width/2); if(angle<0) angle+=Math.PI*2;
+            const center=Math.round(angle*data.nodes.length/(Math.PI*2))%data.nodes.length, span=Math.min(1500,data.nodes.length-1);
+            let nearest=-1, distance=Infinity;
+            for(let delta=-span;delta<=span;delta++) { const index=(center+delta+data.nodes.length)%data.nodes.length, next=Math.hypot(overviewXs[index]-x,overviewYs[index]-y); if(next<distance){distance=next;nearest=index;} }
+            for(const index of roots){const next=Math.hypot(overviewXs[index]-x,overviewYs[index]-y);if(next<distance){distance=next;nearest=index;}}
+            if(nearest>=0&&distance<=Math.max(16/scale,4)){showDetails(nearest);render();} return;
+          }
+          let hit=null, distance=Infinity; for(const item of hits){const next=Math.hypot(item.x-x,item.y-y);if(next<=item.radius&&next<distance){hit=item;distance=next;}} if(hit) choose(hit.index);
+        });
+        canvas.addEventListener('dblclick', () => { if(mode==='overview'&&selected>=0) { focus=selected; mode='explore'; render(); } });
+        canvas.addEventListener('wheel',(event)=>{event.preventDefault();const point=screenPoint(event);zoomTo(scale*(event.deltaY<0?1.2:1/1.2),point.screenX,point.screenY);},{passive:false});
+        canvas.addEventListener('mousedown',(event)=>{dragStart={x:event.clientX-offsetX,y:event.clientY-offsetY};dragged=false;canvas.classList.add('dragging');});
+        window.addEventListener('mousemove',(event)=>{if(!dragStart)return;const nextX=event.clientX-dragStart.x,nextY=event.clientY-dragStart.y;if(Math.hypot(nextX-offsetX,nextY-offsetY)>3)dragged=true;offsetX=nextX;offsetY=nextY;scheduleRender();});
+        window.addEventListener('mouseup',()=>{dragStart=null;canvas.classList.remove('dragging');setTimeout(()=>{dragged=false;},0);});
+        canvas.addEventListener('keydown', (event) => { if (!hits.length) return; let position = Math.max(0, hits.findIndex((item) => item.index === selected)); if (event.key === 'ArrowDown' || event.key === 'ArrowRight') position = (position+1)%hits.length; else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') position = (position-1+hits.length)%hits.length; else if (event.key === 'Enter') return choose(hits[position].index); else return; event.preventDefault(); selected = hits[position].index; render(); });
+        back.addEventListener('click', () => { if (focus < 0) return; focus=data.nodes[focus].parent; selected=focus; render(); });
+        overviewButton.addEventListener('click',()=>{mode='overview';render();}); exploreButton.addEventListener('click',()=>{mode='explore';render();});
+        document.getElementById('zoom-in').addEventListener('click',()=>zoomTo(scale*1.25)); document.getElementById('zoom-out').addEventListener('click',()=>zoomTo(scale/1.25)); zoomReset.addEventListener('click',resetView);
+        search.addEventListener('input',()=>{mode='explore';render();}); typeFilter.addEventListener('change',()=>{mode='explore';render();}); new ResizeObserver(render).observe(canvas.parentElement); render();
     </script>
 </body>
 </html>`;
     const outPath = path.join(this.outputDir, 'index.html');
     fs.writeFileSync(outPath, htmlContent, 'utf-8');
-    console.log(`[+] 인터랙티브 HTML 뷰어 빌드 완료: \${outPath}`);
+    console.log(`[+] 인터랙티브 HTML 뷰어 빌드 완료: ${outPath}`);
   }
 
   writeAiContextGuide() {
@@ -2256,7 +2289,7 @@ Hallucination을 방지하기 위해 다음 탐색 규칙을 반드시 준수하
 `;
     const outPath = path.join(this.outputDir, 'ai_context_guide.txt');
     fs.writeFileSync(outPath, text, 'utf-8');
-    console.log(`[+] AI 컨텍스트 가이드 지침서 작성 완료: \${outPath}`);
+    console.log(`[+] AI 컨텍스트 가이드 지침서 작성 완료: ${outPath}`);
   }
 }
 
