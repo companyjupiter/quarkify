@@ -6,9 +6,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// `.kts` is deliberately absent: the CLI parses it, but auto-discovery would
+// sweep in build.gradle.kts / settings.gradle.kts, whose Gradle DSL is mostly
+// configuration lambdas and adds noise rather than topology. List it in a
+// config's sourceFiles to map it on purpose.
 const SUPPORTED_EXTENSIONS = new Set([
   '.cc', '.cpp', '.cu', '.cuh', '.cxx', '.h', '.hpp', '.java', '.js', '.jsx',
-  '.cjs', '.m', '.metal', '.mjs', '.mm', '.ptx', '.py', '.rb', '.ts', '.tsx', '.zig',
+  '.cjs', '.kt', '.m', '.metal', '.mjs', '.mm', '.ptx', '.py', '.rb', '.ts',
+  '.tsx', '.zig',
 ]);
 
 const IGNORED_DIRECTORIES = new Set([
