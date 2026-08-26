@@ -2445,12 +2445,14 @@ class QuarkFolderEngine {
 
   writeHtmlViewer() {
     const graphData = this.collectTopologyGraphData();
+    const escapedProjectName = escapeHtml(CONFIG.name);
+    const serializedGraphData = JSON.stringify(graphData).replaceAll('<', '\\u003c');
     const htmlContent = `<!DOCTYPE html>
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Quarkify v${QUARKIFY_VERSION} Explorer - ${CONFIG.name}</title>
+    <title>Quarkify v${QUARKIFY_VERSION} Explorer - ${escapedProjectName}</title>
     <style>
         * { box-sizing: border-box; }
         :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
@@ -2483,7 +2485,7 @@ class QuarkFolderEngine {
     <aside class="sidebar">
         <header>
             <h1 class="title">Quarkify v${QUARKIFY_VERSION} ⚛️</h1>
-            <p class="subtitle">${CONFIG.name}</p>
+            <p class="subtitle">${escapedProjectName}</p>
         </header>
         <div class="stats">
           <div class="stat"><strong>${graphData.nodes.length}</strong><span>Total nodes</span></div>
@@ -2506,7 +2508,7 @@ class QuarkFolderEngine {
   </main>
 
     <script>
-        const data = ${JSON.stringify(graphData)};
+        const data = ${serializedGraphData};
         const colors = { project:'#f8fafc', directory:'#22d3ee', file:'#38bdf8', class:'#a855f7', interface:'#c084fc', struct:'#818cf8', function:'#f43f5e', field:'#10b981', var:'#34d399', annotation:'#fbbf24', control_stmt:'#64748b', api_call:'#f472b6', condition:'#06b6d4', catch:'#f97316', generic_stmt:'#94a3b8' };
         const children = Array.from({ length: data.nodes.length }, () => []);
         const roots = [];
@@ -2727,6 +2729,15 @@ Hallucination을 방지하기 위해 다음 탐색 규칙을 반드시 준수하
 }
 
 // ─── 헬퍼 (Helpers) ───
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
 function splitParamsTopLevel(text) {
   // depth-aware comma split (Metal params 의 [[ ]] 안 콤마는 무시 - ignores commas inside [[ ]] of Metal params)
   const out = [];

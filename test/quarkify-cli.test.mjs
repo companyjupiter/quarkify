@@ -188,6 +188,70 @@ test('executable config requires explicit permission flag', async () => {
   });
 });
 
+test('CLI escapes the project name in generated HTML', async () => {
+  await withTempWorkspace(async (tmp) => {
+    const srcDir = path.join(tmp, 'src');
+    const outDir = path.join(tmp, 'out');
+    const configPath = path.join(tmp, 'config.mjs');
+    const projectName = `'</span><img src=x onerror="alert(1 & 2)">`;
+    const escapedProjectName = '&#39;&lt;/span&gt;&lt;img src=x onerror=&quot;alert(1 &amp; 2)&quot;&gt;';
+
+    await mkdir(srcDir, { recursive: true });
+    await writeFile(path.join(srcDir, 'sample.js'), 'export function sampleThing() { return 1; }\n', 'utf8');
+    await writeConfig(configPath, `{
+      name: ${JSON.stringify(projectName)},
+      srcDir: ${JSON.stringify(srcDir)},
+      outDir: ${JSON.stringify(outDir)},
+      sourceFiles: ['sample.js'],
+      perfData: {},
+      guessRole() { return 'general'; },
+    }`);
+
+    const result = runQuarkify(configPath, ['--allow-executable-config']);
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const html = await readFile(path.join(outDir, 'index.html'), 'utf8');
+    assert.equal(html.includes(projectName), false);
+    assert.equal(html.split(escapedProjectName).length - 1, 2);
+  });
+});
+
+test('generated HTML keeps project data inside the intended script', async () => {
+  await withTempWorkspace(async (tmp) => {
+    const srcDir = path.join(tmp, 'src');
+    const outDir = path.join(tmp, 'out');
+    const configPath = path.join(tmp, 'config.mjs');
+    const projectName = '</script><script id="injected">globalThis.__quarkifyInjected = true</script>';
+
+    await mkdir(srcDir, { recursive: true });
+    await writeFile(path.join(srcDir, 'sample.js'), 'export function sampleThing() { return 1; }\n', 'utf8');
+    await writeConfig(configPath, `{
+      name: ${JSON.stringify(projectName)},
+      srcDir: ${JSON.stringify(srcDir)},
+      outDir: ${JSON.stringify(outDir)},
+      sourceFiles: ['sample.js'],
+      perfData: {},
+      guessRole() { return 'general'; },
+    }`);
+
+    const result = runQuarkify(configPath, ['--allow-executable-config']);
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const html = await readFile(path.join(outDir, 'index.html'), 'utf8');
+    assert.doesNotMatch(html, /<script id="injected">/i);
+    assert.doesNotMatch(html, /<\/script><script/i);
+
+    const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)];
+    assert.equal(scripts.length, 1);
+    const dataMatch = scripts[0][1].match(/\bconst data = (.+);\r?\n/);
+    assert.ok(dataMatch);
+    assert.match(dataMatch[1], /\\u003c\/script>\\u003cscript/);
+
+    const data = JSON.parse(dataMatch[1]);
+    assert.equal(data.nodes.find((node) => node.type === 'project')?.label, projectName);
+  });
+});
+
 test('leading double-star globs match root and nested files', async () => {
   await withTempWorkspace(async (tmp) => {
     const srcDir = path.join(tmp, 'src');
