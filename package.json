@@ -20,8 +20,5 @@
   "bugs": {
     "url": "https://github.com/companyjupiter/quarkify/issues"
   },
-  "homepage": "https://github.com/companyjupiter/quarkify#readme",
-  "dependencies": {
-    "puppeteer": "^25.1.0"
-  }
+  "homepage": "https://github.com/companyjupiter/quarkify#readme"
 }
