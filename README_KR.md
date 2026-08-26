@@ -83,6 +83,7 @@ Quarkify는 대규모 상용 및 오픈소스 프로젝트에 적용하여 대�
 * **Python** (`.py`) - *실행 환경 버전 동적 수집, 데코레이터 분석, 들여쓰기 기반의 클래스/함수 및 try-except-finally 분해 지원*
 * **Java** (`.java`) - *Spring Boot 어노테이션 및 고급 try-catch 흐름 분해 지원*
 * **Ruby** (`.rb`) - *`end` 키워드 블록 파서: 모듈/클래스/싱글턴 메서드/엔드리스 메서드, case-when 및 rescue-ensure 분해 지원. `valid?`, `save!`, `name=` 는 서로 다른 노드로 보존되며, 클래스 본문의 DSL 매크로(`has_many`, `validates`, `before_action`)는 Spring 어노테이션과 동일하게 `annotation__` 폴더로 매핑됩니다*
+* **Kotlin** (`.kt`, `.kts`) - *Spring Boot 어노테이션, `data`/`sealed`/`enum` 클래스, object 및 companion object 지원. 주 생성자 프로퍼티는 `bound__constructor` 태그가 붙은 `field__` 노드로 물질화되어 생성자 주입 의존성을 파일을 열지 않고 확인할 수 있으며, 각 프로퍼티는 `mutability__val` / `mutability__var` 를 기록합니다. 식 본문 함수(`fun f() = expr`)와 본문 없는 선언도 나머지 파일을 삼키지 않고 정확히 종료됩니다*
 * **Zig** (`.zig`)
 * **CUDA C++** (`.cu`, `.cuh`)
 * **C / C++** (`.cpp`, `.cc`, `.cxx`, `.h`, `.hpp`)
