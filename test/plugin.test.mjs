@@ -22,6 +22,7 @@ async function withTempWorkspace(fn) {
 }
 
 test('plugin manifests expose the shared analyze skill', () => {
+  const packageMetadata = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
   const codex = JSON.parse(readFileSync(path.join(repoRoot, '.codex-plugin', 'plugin.json'), 'utf8'));
   const claude = JSON.parse(readFileSync(path.join(repoRoot, '.claude-plugin', 'plugin.json'), 'utf8'));
   const codexMarketplace = JSON.parse(readFileSync(path.join(repoRoot, '.agents', 'plugins', 'marketplace.json'), 'utf8'));
@@ -31,6 +32,7 @@ test('plugin manifests expose the shared analyze skill', () => {
   assert.equal(claude.name, 'quarkify');
   assert.equal(codex.skills, './skills/');
   assert.equal(claude.skills, './skills/');
+  assert.equal(codex.version, packageMetadata.version);
   assert.equal(claude.version, codex.version);
   assert.equal(claudeMarketplace.plugins[0].version, codex.version);
   assert.equal(codexMarketplace.plugins[0].source.path, './');
