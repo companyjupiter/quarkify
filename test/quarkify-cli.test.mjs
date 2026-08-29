@@ -42,6 +42,14 @@ async function listRelativeEntries(dir, root = dir) {
   return entries;
 }
 
+test('package metadata points at the real CLI entrypoint', async () => {
+  const pkg = JSON.parse(await readFile(path.join(repoRoot, 'package.json'), 'utf8'));
+
+  assert.equal(pkg.main, 'quarkify.mjs');
+  assert.equal(pkg.bin?.quarkify, './quarkify.mjs');
+  assert.ok(existsSync(path.join(repoRoot, pkg.main)));
+});
+
 test('CLI materializes quark output, mirrors, axons, and guide artifacts', async () => {
   await withTempWorkspace(async (tmp) => {
     const srcDir = path.join(tmp, 'src');
