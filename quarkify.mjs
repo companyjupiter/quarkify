@@ -136,9 +136,25 @@ function validateConfig(config) {
   return config;
 }
 
+// Letters, marks and digits in any script survive: flattening every non-ASCII
+// character to `_` made `서비스/주문.rb` unreadable and made any two same-length
+// names in one script identical. NFC first, so a name comes out the same
+// whichever normalization the source used. The cap counts UTF-8 bytes, not
+// characters — Linux filesystems limit a name to 255 bytes (macOS counts
+// characters, so it hides this) and 100 Hangul are 300 — and never splits a
+// character. ASCII names come out exactly as before.
 function safeName(name) {
   if (!name) return '_anonymous_';
-  return name.replace(/[^a-zA-Z0-9_$.]/g, '_').substring(0, 100);
+  const flat = String(name).normalize('NFC').replace(/[^\p{L}\p{M}\p{N}_$.]/gu, '_');
+  if (Buffer.byteLength(flat) <= 100) return flat;
+  let out = '';
+  let bytes = 0;
+  for (const ch of flat) {
+    bytes += Buffer.byteLength(ch);
+    if (bytes > 100) break;
+    out += ch;
+  }
+  return out;
 }
 function safeLiteralName(value, key = '') {
   if (shouldRedactLiteral(value, key)) return 'redacted_literal';
