@@ -229,6 +229,20 @@ const QUARKIFY_VERSION = '1.1.0';
 // symbol audit reported 0% coverage on any ESM codebase.
 const JS_FAMILY_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
 
+// ECMAScript IdentifierName: ID_Start/$/_ then ID_Continue/$/ZWNJ/ZWJ. An
+// ASCII class drops `function 인사()` from the tree without any error.
+const JS_IDENT = String.raw`[\p{ID_Start}$_][\p{ID_Continue}$\u200C\u200D]*`;
+const JS_KW_END = String.raw`(?![\p{ID_Continue}$\u200C\u200D])`;
+const JS_CLASS_DECL = new RegExp(String.raw`^\s*(?:export\s+)?(class|interface)\s+(${JS_IDENT})`, 'u');
+const JS_FUNCTION_DECL = new RegExp(String.raw`^\s*(?:export\s+)?(?:async\s+)?function\s+(${JS_IDENT})\s*\(`, 'u');
+const JS_ARROW_DECL = new RegExp(String.raw`^\s*(?:export\s+)?(?:const|let|var)\s+(${JS_IDENT})\s*=\s*(?:async\s+)?(?:\([^)]*\)|${JS_IDENT})\s*=>`, 'u');
+const JS_FUNCTION_EXPR_DECL = new RegExp(String.raw`^\s*(?:export\s+)?(?:const|let|var)\s+(${JS_IDENT})\s*=\s*(?:async\s+)?function${JS_KW_END}`, 'u');
+// Coverage-audit scan (see NAIVE_SYMBOL_SCANS). `*` is excluded so generator
+// syntax (`function *gen`) is not counted, which is unchanged from before;
+// `\` and `/` so a regex literal like /function foo\(/ is not read as a
+// declaration of `foo\`.
+const JS_FUNCTION_SCAN = new RegExp(String.raw`(?<![\p{ID_Continue}$\u200C\u200D])function\s+([^\s()[\]{}<>*\\/'"\x60,;=]+)\s*\(`, 'gu');
+
 // ─── PTX arg 의미 분류 (PTX Argument Classification) ───
 function classifyPtxArg(raw, opcode) {
   let r = raw.trim();
@@ -756,6 +770,17 @@ function emitStmtList(stmts, parentPath) {
 }
 
 // ─── Python 인덴테이션 기반 구문 분석기 (Python Indentation-based Parser) ───
+
+// PEP 3131: a Python identifier is XID_Start (or `_`) followed by XID_Continue.
+// Not [\p{L}\p{N}_] — that stops at combining marks and cuts `नमस्ते` to `नमस`.
+// An ASCII-only class is worse: `def 인사():` falls through to stmt_N__expr and
+// the function vanishes from the tree without a trace.
+const PY_IDENT = String.raw`(?:\p{XID_Start}|_)\p{XID_Continue}*`;
+const PY_DECORATOR = new RegExp(String.raw`^@(${PY_IDENT}(?:\.${PY_IDENT})*)(?:\((.*)\))?`, 'u');
+const PY_CLASS = new RegExp(String.raw`^class\s+(${PY_IDENT})`, 'u');
+const PY_DEF = new RegExp(String.raw`^(?:async\s+)?def\s+(${PY_IDENT})`, 'u');
+const PY_ASSIGN = new RegExp(String.raw`^(${PY_IDENT})\s*(?::\s*[^=]+)?\s*=`, 'u');
+
 class PythonIndentParser {
   constructor(lines) {
     this.lines = lines;
@@ -806,7 +831,7 @@ class PythonIndentParser {
         const prevLine = this.lines[k];
         const prevTrim = prevLine.trim();
         if (prevTrim.startsWith('@')) {
-          const decM = prevTrim.match(/^@([a-zA-Z0-9_.]+)(?:\((.*)\))?/);
+          const decM = prevTrim.match(PY_DECORATOR);
           if (decM) {
             decorators.unshift({ name: decM[1], args: decM[2] || '' });
           }
@@ -829,10 +854,10 @@ class PythonIndentParser {
       let kind = 'stmt';
       let name = '';
       let m;
-      if ((m = trimmed.match(/^class\s+([a-zA-Z0-9_]+)/))) {
+      if ((m = trimmed.match(PY_CLASS))) {
         kind = 'class';
         name = m[1];
-      } else if ((m = trimmed.match(/^(?:async\s+)?def\s+([a-zA-Z0-9_]+)/))) {
+      } else if ((m = trimmed.match(PY_DEF))) {
         kind = 'fn';
         name = m[1];
       } else if (trimmed.startsWith('if ') || trimmed.startsWith('if(')) {
@@ -854,7 +879,7 @@ class PythonIndentParser {
       } else if (trimmed.startsWith('return ') || trimmed === 'return') {
         kind = 'return';
       } else if (trimmed.includes('=')) {
-        const leftM = trimmed.match(/^([a-zA-Z0-9_]+)\s*(?::\s*[^=]+)?\s*=/);
+        const leftM = trimmed.match(PY_ASSIGN);
         if (leftM && !trimmed.startsWith('if ') && !trimmed.startsWith('while ')) {
           kind = 'var';
           name = leftM[1];
@@ -881,6 +906,10 @@ const BLOCK_STMT_KINDS = new Set([
   'if', 'elif', 'elsif', 'else', 'unless', 'for', 'while', 'until', 'case',
   'when', 'try', 'except', 'rescue', 'finally', 'ensure', 'begin', 'do', 'return',
 ]);
+
+// Call sites inside a Python/Ruby statement. The lookbehind stands in for `\b`,
+// which is ASCII-only: with it, `값bar(` would be read as a call to `bar`.
+const BLOCK_CALL = /(?<!\p{XID_Continue})((?:\p{XID_Start}|_)\p{XID_Continue}*)\s*\(/gu;
 
 function emitBlockNode(node, parentPath, idx) {
   const prefix = `stmt_${idx}`;
@@ -934,7 +963,7 @@ function emitBlockNode(node, parentPath, idx) {
 
   if (!isScope && node.kind !== 'annotation') {
     const line = node.line;
-    const callMatches = line.matchAll(/\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/g);
+    const callMatches = line.matchAll(BLOCK_CALL);
     for (const m of callMatches) {
       const callName = m[1];
       if (!/^(if|unless|while|until|for|return|try|except|rescue|ensure|finally|import|from|class|module|def|print|puts)$/.test(callName)) {
@@ -1006,11 +1035,22 @@ function stripRubyInline(line) {
   return out;
 }
 
-const RUBY_OPENERS = /^(?:def|class|module|if|unless|while|until|case|for|begin)\b/;
-const RUBY_BRANCH = /^(elsif|else|when|in|rescue|ensure)\b/;
+// Ruby reads every non-ASCII character as an identifier character, so `인사`,
+// `café` and `🍣` are all valid method names. The keyword boundary has to use
+// the same alphabet: JavaScript's `\b` is ASCII-only, so `/^end\b/` matches
+// `end값 = 1` and closes a block that was never opened.
+const RB_ID_START = String.raw`[A-Za-z_\u{80}-\u{10FFFF}]`;
+const RB_ID_CHAR = String.raw`[A-Za-z0-9_\u{80}-\u{10FFFF}]`;
+const RB_KW_END = `(?!${RB_ID_CHAR})`;
+const RB_IDENT = `${RB_ID_START}${RB_ID_CHAR}*`;
+const rubyRe = (source, flags = '') => new RegExp(source, `u${flags}`);
+
+const RUBY_OPENERS = rubyRe(`^(?:def|class|module|if|unless|while|until|case|for|begin)${RB_KW_END}`);
+const RUBY_BRANCH = rubyRe(`^(elsif|else|when|in|rescue|ensure)${RB_KW_END}`);
+const RUBY_END = rubyRe(`^end${RB_KW_END}`);
 // `def foo = expr` / `def foo(a) = expr`. The mandatory space before `=`
 // distinguishes it from a setter (`def name=(v)`), where `=` binds to the name.
-const RUBY_ENDLESS_DEF = /^def\s+(?:self\.)?[A-Za-z_][A-Za-z0-9_]*[?!]?\s*(?:\([^)]*\))?\s+=\s/;
+const RUBY_ENDLESS_DEF = rubyRe(String.raw`^def\s+(?:self\.)?${RB_IDENT}[?!]?\s*(?:\([^)]*\))?\s+=\s`);
 // Heredoc tags: <<~TAG / <<-TAG / <<TAG / <<'TAG'. A bare <<TAG demands an
 // uppercase tag so that `arr <<item` is not mistaken for one.
 const RUBY_HEREDOC = /<<([-~])?(?:(['"])([A-Za-z_][A-Za-z0-9_]*)\2|([A-Z_][A-Z0-9_]*))/g;
@@ -1022,36 +1062,44 @@ const RUBY_HEREDOC = /<<([-~])?(?:(['"])([A-Za-z_][A-Za-z0-9_]*)\2|([A-Z_][A-Z0-
 // count. `return` and `then` are deliberately absent, because `return if x` IS
 // a modifier.
 const RUBY_VALUE_OPENERS = [
-  /[^=!<>~]=\s*(?:if|unless|case|begin)\b/g,
-  /(?:\|\||&&|[(,])\s*(?:if|unless|case|begin)\b/g,
+  rubyRe(String.raw`[^=!<>~]=\s*(?:if|unless|case|begin)${RB_KW_END}`, 'g'),
+  rubyRe(String.raw`(?:\|\||&&|[(,])\s*(?:if|unless|case|begin)${RB_KW_END}`, 'g'),
 ];
+const RUBY_DO_OPENER = rubyRe(String.raw`(?<!${RB_ID_CHAR})do\s*(?:\|[^|]*\|)?\s*$`);
+const RUBY_END_CLOSERS = rubyRe(String.raw`(?:^|[\s;])end${RB_KW_END}`, 'g');
 
 // Net block depth contributed by one already-stripped line.
 function rubyBlockDelta(line) {
   let opens = 0;
   if (RUBY_OPENERS.test(line) && !RUBY_ENDLESS_DEF.test(line)) opens++;
   for (const re of RUBY_VALUE_OPENERS) opens += (line.match(re) || []).length;
-  if (/\bdo\s*(?:\|[^|]*\|)?\s*$/.test(line)) opens++;
-  const closes = (line.match(/(?:^|[\s;])end\b/g) || []).length;
+  if (RUBY_DO_OPENER.test(line)) opens++;
+  const closes = (line.match(RUBY_END_CLOSERS) || []).length;
   return opens - closes;
 }
+
+const RUBY_CLASS_DECL = rubyRe(String.raw`^(class|module)\s+(${RB_ID_START}(?:${RB_ID_CHAR}|:)*)`);
+const RUBY_DEF_DECL = rubyRe(String.raw`^def\s+(?:self\.)?(${RB_IDENT}[?!=]?)`);
+const RUBY_BLOCK_KEYWORD = rubyRe(`^(if|unless|while|until|case|for|begin)${RB_KW_END}`);
+const RUBY_RETURN = rubyRe(`^return${RB_KW_END}`);
+const RUBY_ASSIGN = rubyRe(String.raw`^(@{0,2}${RB_IDENT})\s*(?:\|\||&&)?=[^=~>]`);
 
 function classifyRubyLine(line) {
   let m;
   if (/^class\s*<<\s*/.test(line)) return { kind: 'class', name: 'singleton_class' };
-  if ((m = line.match(/^(class|module)\s+([A-Za-z_][A-Za-z0-9_:]*)/))) {
+  if ((m = line.match(RUBY_CLASS_DECL))) {
     return { kind: m[1], name: m[2].replace(/::/g, '.') };
   }
-  if ((m = line.match(/^def\s+(?:self\.)?([A-Za-z_][A-Za-z0-9_]*[?!=]?)/))) {
+  if ((m = line.match(RUBY_DEF_DECL))) {
     return { kind: 'fn', name: rubyMethodFolderName(m[1]) };
   }
   if ((m = line.match(RUBY_BRANCH))) return { kind: m[1] === 'in' ? 'when' : m[1], name: '' };
-  if ((m = line.match(/^(if|unless|while|until|case|for|begin)\b/))) return { kind: m[1], name: '' };
-  if (/^return\b/.test(line)) return { kind: 'return', name: '' };
-  if ((m = line.match(/^(@{0,2}[A-Za-z_][A-Za-z0-9_]*)\s*(?:\|\||&&)?=[^=~>]/))) {
+  if ((m = line.match(RUBY_BLOCK_KEYWORD))) return { kind: m[1], name: '' };
+  if (RUBY_RETURN.test(line)) return { kind: 'return', name: '' };
+  if ((m = line.match(RUBY_ASSIGN))) {
     return { kind: 'var', name: m[1] };
   }
-  if (/\bdo\s*(?:\|[^|]*\|)?\s*$/.test(line)) return { kind: 'do', name: '' };
+  if (RUBY_DO_OPENER.test(line)) return { kind: 'do', name: '' };
   return { kind: 'stmt', name: '' };
 }
 
@@ -1135,7 +1183,7 @@ class RubyEndParser {
       }
       const trimmed = stripRubyInline(raw).trim();
       if (!trimmed) { this.i++; continue; }
-      if (/^end\b/.test(trimmed) || RUBY_BRANCH.test(trimmed)) return nodes;
+      if (RUBY_END.test(trimmed) || RUBY_BRANCH.test(trimmed)) return nodes;
       nodes.push(...this.parseNode());
     }
     return nodes;
@@ -1187,7 +1235,7 @@ class RubyEndParser {
         cur = node;
         continue;
       }
-      if (/^end\b/.test(t)) this.i++;
+      if (RUBY_END.test(t)) this.i++;
       break;
     }
     return chain;
@@ -1408,14 +1456,23 @@ class QuarkFolderEngine {
   // parser's regex — a shared pattern would be blind in exactly the same way.
   // It is a permissive keyword sweep, and only the direction that matters is
   // reported: declared in the source but missing from the tree.
+  //
+  // The name is captured as any run of non-delimiter characters, NOT as an
+  // identifier class. An identifier class is the parser's alphabet, and
+  // both used to be ASCII-only: `def 인사():` was skipped by the scan as well as
+  // the parser, so --strict-coverage passed on a file missing that function.
+  // A name the parser cannot read must be reported, not silently skipped.
   static NAIVE_SYMBOL_SCANS = {
     '.zig': /\bfn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/g,
-    '.py': /^[ \t]*def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/gm,
-    '.js': /\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g,
-    '.mjs': /\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g,
-    '.cjs': /\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g,
-    '.ts': /\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g,
-    '.rb': /^[ \t]*def\s+(?:self\.)?([A-Za-z_][A-Za-z0-9_]*[?!=]?)/gm,
+    '.py': /^[ \t]*(?:async[ \t]+)?def\s+([^\s()[\]{}:]+)\s*[(\[]/gm,
+    '.js': JS_FUNCTION_SCAN,
+    '.mjs': JS_FUNCTION_SCAN,
+    '.cjs': JS_FUNCTION_SCAN,
+    '.ts': JS_FUNCTION_SCAN,
+    // The first character must still be word-like (or non-ASCII), otherwise
+    // operator methods (`def ==`, `def <=>`, `def []`) would be counted as
+    // names the parser is expected to have read.
+    '.rb': /^[ \t]*def\s+(?:self\.)?((?:\w|[^\x00-\x7F])[^\s()[\]{};,.=?!]*[?!=]?)/gm,
   };
 
   // A language whose method names carry characters safeName() flattens must
@@ -1814,13 +1871,13 @@ class QuarkFolderEngine {
         } else if (JS_FAMILY_EXTENSIONS.has(ext)) {
           const trimmed = line.trim();
           if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*') || trimmed.length === 0 || trimmed.startsWith('import ') || trimmed.startsWith('export *')) {
-          } else if ((m = line.match(/^\s*(?:export\s+)?(class|interface)\s+([a-zA-Z0-9_]+)/))) {
+          } else if ((m = line.match(JS_CLASS_DECL))) {
             name = m[2]; kind = m[1]; role = 'type';
-          } else if ((m = line.match(/^\s*(?:export\s+)?(?:async\s+)?function\s+([a-zA-Z0-9_]+)\s*\(/))) {
+          } else if ((m = line.match(JS_FUNCTION_DECL))) {
             name = m[1]; kind = 'fn'; role = guessRole(name);
-          } else if ((m = line.match(/^\s*(?:export\s+)?(?:const|let|var)\s+([a-zA-Z0-9_]+)\s*=\s*(?:async\s+)?(?:\([^)]*\)|[a-zA-Z0-9_]+)\s*=>/))) {
+          } else if ((m = line.match(JS_ARROW_DECL))) {
             name = m[1]; kind = 'fn'; role = guessRole(name);
-          } else if ((m = line.match(/^\s*(?:export\s+)?(?:const|let|var)\s+([a-zA-Z0-9_]+)\s*=\s*(?:async\s+)?function\b/))) {
+          } else if ((m = line.match(JS_FUNCTION_EXPR_DECL))) {
             name = m[1]; kind = 'fn'; role = guessRole(name);
           }
         }
