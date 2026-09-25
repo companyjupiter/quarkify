@@ -1752,6 +1752,12 @@ class QuarkFolderEngine {
       cur = null;
     };
 
+    // A declaration with no body — Zig `extern fn f(…) i32;`, a C prototype
+    // `int f(int a,\n int b);`, a Java abstract method — ends at its `;`. Waiting
+    // for a `{` instead swallowed every declaration after it into this one's
+    // folder, up to the next body that happened to close.
+    const isBodylessEnd = (stripped) => !openedOnce && depth <= 0 && /;\s*$/.test(stripped);
+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const stripped = line.replace(/"(?:[^"\\]|\\.)*"/g, '').replace(/\/\/.*/g, '');
@@ -1833,12 +1839,14 @@ class QuarkFolderEngine {
           openedOnce = openers > 0;
           if (cur.kind === 'var' && line.includes(';')) finishSymbol(i + 1);
           else if (openedOnce && depth <= 0) finishSymbol(i + 1);
+          else if (isBodylessEnd(stripped)) finishSymbol(i + 1);
         }
       } else {
         depth += openers - closers;
         if (openers > 0) openedOnce = true;
         if (cur.kind === 'var' && line.includes(';')) finishSymbol(i + 1);
         else if (openedOnce && depth <= 0) finishSymbol(i + 1);
+        else if (isBodylessEnd(stripped)) finishSymbol(i + 1);
       }
     }
     finishSymbol(lines.length);
