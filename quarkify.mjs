@@ -2765,11 +2765,23 @@ function getFilesRecursively(dir, files = []) {
       if (entry.name !== '.git' && entry.name !== 'node_modules') {
         getFilesRecursively(res, files);
       }
-    } else {
+    } else if (entry.isFile() || (entry.isSymbolicLink() && isRegularFile(res))) {
+      // Only regular files. A symlink to a directory is not an entry to read —
+      // `**/*` matched it and readFileSync failed the whole run with EISDIR —
+      // and it is not followed either, which would risk cycles. A FIFO or
+      // socket would block or fail the same way.
       files.push(res);
     }
   }
   return files;
+}
+
+function isRegularFile(p) {
+  try {
+    return fs.statSync(p).isFile();
+  } catch {
+    return false;
+  }
 }
 
 function matchGlobPattern(relPath, pattern) {
@@ -2917,6 +2929,7 @@ async function main() {
   for (const rel of resolvedFiles) {
     const abs = validateSourceFilePath(srcRoot, rel);
     if (!fs.existsSync(abs)) { console.log(`[-] 건너뜀: ${rel}`); continue; }
+    if (!isRegularFile(abs)) { console.log(`[-] 건너뜀 (파일 아님): ${rel}`); continue; }
     console.log(`[+] 분해 중: ${rel}`);
     engine.processFile(abs, rel);
   }
