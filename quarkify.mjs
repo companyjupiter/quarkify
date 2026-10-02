@@ -871,6 +871,65 @@ class PythonIndentParser {
   }
 }
 
+// Indentation applies to Python's *logical* lines, and one logical line can
+// span many physical ones: an open bracket, a triple-quoted string or a
+// trailing `\` continues it. PythonIndentParser measures indent per physical
+// line, so the `):` that closes a black-formatted signature at column 0 ended
+// the function, and its real body was filed under that `):` line instead. A
+// multi-line string with text at column 0 broke the enclosing block the same
+// way. The fn__ folder still existed, so the coverage audit could not see it.
+//
+// Joins each logical line into one entry. A line that is complete on its own
+// is passed through untouched; continuation lines lose their comments.
+function joinPythonLogicalLines(lines) {
+  const out = [];
+  let depth = 0;
+  let triple = null; // the open '"""' or "'''" while inside one
+  let quote = null; // the open ' or " of a plain string
+  let pending = null;
+  for (const raw of lines) {
+    let i = 0;
+    while (i < raw.length) {
+      const c = raw[i];
+      if (triple) {
+        if (raw.startsWith(triple, i)) { triple = null; i += 3; } else i += c === '\\' ? 2 : 1;
+      } else if (quote) {
+        if (c === '\\') i += 2;
+        else { if (c === quote) quote = null; i++; }
+      } else if (c === '#') {
+        break;
+      } else if (raw.startsWith('"""', i) || raw.startsWith("'''", i)) {
+        triple = raw.slice(i, i + 3);
+        i += 3;
+      } else {
+        if (c === '"' || c === "'") quote = c;
+        else if (c === '(' || c === '[' || c === '{') depth++;
+        else if (c === ')' || c === ']' || c === '}') depth = Math.max(0, depth - 1);
+        i++;
+      }
+    }
+    // A plain string ends with its physical line unless an escaped newline
+    // (`"hello\` + newline) continues it; otherwise its `(` on the next line
+    // would be counted as code and swallow the rest of the file.
+    if (quote && !/\\\r?$/.test(raw)) quote = null;
+    let code = raw.slice(0, i);
+    const backslash = !triple && /\\\s*$/.test(code);
+    if (backslash) code = code.replace(/\\\s*$/, '');
+    const open = depth > 0 || triple !== null || backslash;
+
+    if (pending === null) {
+      if (!open) { out.push(raw); continue; }
+      pending = code.trimEnd();
+    } else {
+      const piece = code.trim();
+      if (piece) pending += ` ${piece}`;
+      if (!open) { out.push(pending); pending = null; }
+    }
+  }
+  if (pending !== null) out.push(pending);
+  return out;
+}
+
 // ─── 블록 노드 → 폴더 트리 실체화 (Block Node to Folder Tree Realization) ───
 //
 // Shared by every block-structured language whose parser emits the
@@ -1584,7 +1643,7 @@ class QuarkFolderEngine {
       mkdirSync(path.join(fileQuarkPath, `python_version__${verClean}`));
     }
 
-    const lines = text.split('\n');
+    const lines = joinPythonLogicalLines(text.split('\n'));
     const parser = new PythonIndentParser(lines);
     const nodes = parser.parse();
 
