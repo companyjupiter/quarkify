@@ -1442,7 +1442,9 @@ class QuarkFolderEngine {
   }
 
   recordExpectedSymbols(text, ext, relPath, fileFolderName) {
-    const pattern = QuarkFolderEngine.NAIVE_SYMBOL_SCANS[ext];
+    // JSX/TSX use the JS/TS parser and must share its independent coverage scan.
+    const scanExt = ext === '.jsx' ? '.js' : ext === '.tsx' ? '.ts' : ext;
+    const pattern = QuarkFolderEngine.NAIVE_SYMBOL_SCANS[scanExt];
     if (!pattern) return; // no independent scan for this language yet
     const names = new Set();
     const preStrip = QuarkFolderEngine.SOURCE_PRE_STRIPS[ext];
