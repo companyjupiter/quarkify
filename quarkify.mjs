@@ -2773,7 +2773,9 @@ function getFilesRecursively(dir, files = []) {
 }
 
 function matchGlobPattern(relPath, pattern) {
-  const patternSegments = pattern.replace(/\\/g, '/').split('/').filter(Boolean);
+  // `.` segments (`./src/**/*.ts`, `src/./lib/*.ts`) name the current directory,
+  // and a relative path never contains them, so drop them before matching.
+  const patternSegments = pattern.replace(/\\/g, '/').split('/').filter((seg) => seg && seg !== '.');
   const relSegments = relPath.replace(/\\/g, '/').split('/').filter(Boolean);
   const memo = new Map();
 

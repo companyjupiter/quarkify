@@ -312,6 +312,35 @@ test('segment globs support nested double-star and single-star patterns', async 
   });
 });
 
+test('globs written with a leading ./ match the same files as without it', async () => {
+  await withTempWorkspace(async (tmp) => {
+    const srcDir = path.join(tmp, 'src');
+    const outDir = path.join(tmp, 'out');
+    const configPath = path.join(tmp, 'config.mjs');
+
+    await mkdir(path.join(srcDir, 'src', 'main'), { recursive: true });
+    await mkdir(path.join(srcDir, 'scratch'), { recursive: true });
+    await writeFile(path.join(srcDir, 'src', 'main', 'Deep.java'), 'public class Deep {}\n', 'utf8');
+    await writeFile(path.join(srcDir, 'scratch', 'Scratch.java'), 'public class Scratch {}\n', 'utf8');
+    await writeConfig(configPath, `{
+      name: 'dot-slash-glob-regression',
+      srcDir: ${JSON.stringify(srcDir)},
+      outDir: ${JSON.stringify(outDir)},
+      sourceFiles: ['./src/**/*.java', 'scratch/./*.java'],
+      perfData: {},
+      guessRole() { return 'general'; },
+    }`);
+
+    const result = runQuarkify(configPath, ['--allow-executable-config']);
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const fileFolders = await readdir(path.join(outDir, 'quark'));
+    assert.equal(fileFolders.length, 2);
+    assert.ok(fileFolders.some((name) => name.includes('Deep.java')));
+    assert.ok(fileFolders.some((name) => name.includes('Scratch.java')));
+  });
+});
+
 test('outDir cannot be the same directory as srcDir', async () => {
   await withTempWorkspace(async (tmp) => {
     const srcDir = path.join(tmp, 'src');
