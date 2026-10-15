@@ -83,6 +83,7 @@ Once analysis completes, Quarkify physically creates three core folders, an inte
 * **Python** (`.py`) - *Supports runtime version auto-detection, decorator parsing, and indentation-based statement (try-except-finally, if, for) deconstruction.*
 * **Java** (`.java`) - *Supports Spring Boot annotations & advanced try-catch-finally block deconstruction.*
 * **Ruby** (`.rb`) - *Keyword-block (`end`) parser: modules, classes, singleton and endless methods, case/when and rescue/ensure deconstruction. Predicate, bang and setter methods (`valid?`, `save!`, `name=`) keep distinct nodes, and class-body DSL macros (`has_many`, `validates`, `before_action`) are mapped to `annotation__` folders like Spring annotations.*
+* **Kotlin** (`.kt`, `.kts`) - *Spring Boot annotations, `data`/`sealed`/`enum` classes, objects and companion objects. Primary-constructor properties are materialized as `field__` nodes tagged `bound__constructor`, so constructor-injected dependencies are visible without opening a file, and each property records `mutability__val` / `mutability__var`. Expression-body functions (`fun f() = expr`) and bodyless declarations terminate correctly instead of swallowing the rest of the file.*
 * **Zig** (`.zig`)
 * **CUDA C++** (`.cu`, `.cuh`)
 * **C / C++** (`.cpp`, `.cc`, `.cxx`, `.h`, `.hpp`)

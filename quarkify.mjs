@@ -229,6 +229,34 @@ const QUARKIFY_VERSION = '1.1.0';
 // symbol audit reported 0% coverage on any ESM codebase.
 const JS_FAMILY_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
 
+// Kotlin shares Java's brace model and annotation syntax, but not its
+// termination rule: `fun f() = expr` and `class Foo(val a: Int)` have no block
+// body at all, so a matcher that waits for a balanced `{` swallows the rest of
+// the file. See the `awaitingSignature` handling in processCStyle.
+const KOTLIN_EXTENSIONS = new Set(['.kt', '.kts']);
+
+// Kotlin declaration keywords that may precede `fun`/`class`/`val`. Ordered
+// alternation only — the matcher applies them with `*`, so order is irrelevant.
+const KOTLIN_MODIFIERS =
+  '(?:public|private|protected|internal|open|override|abstract|final|sealed|' +
+  'suspend|inline|noinline|crossinline|operator|infix|tailrec|external|' +
+  'expect|actual|const|lateinit|annotation|data|value|inner|companion)';
+
+// The parser's own function-name pattern. An extension function keeps its
+// receiver (`Region.toDto`) so that same-named extensions on different
+// receivers do not merge into one folder, and a receiver may itself be
+// generic (`List<T>`), nullable (`String?`), or qualified (`kotlin.text.Regex`).
+//
+// This pattern is deliberately NOT shared with NAIVE_SYMBOL_SCANS. An earlier
+// revision did share it, reasoning that the two must agree on a function's
+// name or the audit would report gaps that are not real. That reasoning
+// inverted the audit's purpose: a receiver form neither pattern accepted was
+// then invisible to both, so a file with three functions materialized one and
+// reported 1/1 (100.0%). The audit must be able to be wrong in a direction the
+// parser is not, which means it must scan independently.
+const KOTLIN_RECEIVER = '(?:[a-zA-Z_][a-zA-Z0-9_]*(?:\\s*<[^<>]*(?:<[^<>]*>)?[^<>]*>)?\\s*\\??\\s*\\.\\s*)*';
+const KOTLIN_FUN_NAME = `(?:<[^>]+>\\s*)?(${KOTLIN_RECEIVER}[a-zA-Z_][a-zA-Z0-9_]*)`;
+
 // ─── PTX arg 의미 분류 (PTX Argument Classification) ───
 function classifyPtxArg(raw, opcode) {
   let r = raw.trim();
@@ -270,6 +298,80 @@ function parseJavaFields(body) {
     const m = l.match(/^\s*(?:public\s+|protected\s+|private\s+|static\s+|final\s+|transient\s+|volatile\s+)*([a-zA-Z0-9_<>\[\]]+)\s+([a-zA-Z0-9_]+)\s*(?:=\s*([^;]+))?;\s*$/);
     if (!m) continue;
     fields.push({ name: m[2].trim(), type: m[1].trim(), default: (m[3] || '').trim() });
+  }
+  return fields;
+}
+
+// ─── Kotlin 프로퍼티 파서 (Kotlin Property Parser) ───
+//
+// Kotlin has no statement terminator, so parseJavaFields' `;`-anchored regex
+// matches nothing at all here. A property also carries its mutability in the
+// keyword itself (`val` vs `var`), which is worth keeping: for a Spring bean,
+// a `var` field is the mutable state you actually have to reason about.
+function parseKotlinFields(body) {
+  const fields = [];
+  // `body` is everything between the container's braces, function bodies
+  // included. Without a depth counter a method's local `val` is recorded as a
+  // property of the enclosing class, which inflates the class's apparent state
+  // and corrupts any count taken from the `mutability__` nodes. Only depth 0 —
+  // the container's own body — declares properties.
+  let depth = 0;
+  const pattern = new RegExp(
+    `^(?:${KOTLIN_MODIFIERS}\\s+)*(val|var)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?::\\s*([^=]+?))?\\s*(?:=\\s*(.+?)|by\\s+(.+?))?\\s*$`,
+  );
+  for (const raw of body.split('\n')) {
+    const l = raw.replace(/\/\/.*/g, '').trim();
+    const code = l.replace(/"(?:[^"\\]|\\.)*"/g, '').replace(/'(?:[^'\\]|\\.)*'/g, '');
+    const opens = (code.match(/\{/g) || []).length;
+    const closes = (code.match(/\}/g) || []).length;
+    // A property declared on a line that also opens a block (`val x = run {`)
+    // still belongs to this container, so the depth is raised only afterwards.
+    const depthHere = depth;
+    depth += opens - closes;
+    if (depthHere !== 0 || !l) continue;
+    // `for (item in xs)` and destructuring both start with val/var but are not
+    // properties; a delegated property (`by lazy { … }`) is.
+    const m = l.match(pattern);
+    if (!m) continue;
+    fields.push({
+      name: m[2].trim(),
+      type: (m[3] || '').trim(),
+      default: (m[4] || m[5] || '').trim(),
+      mutable: m[1] === 'var',
+    });
+  }
+  return fields;
+}
+
+// ─── Kotlin 주 생성자 파서 (Kotlin Primary Constructor Parser) ───
+//
+// `class Foo(private val repo: Repo)` declares a property, not just a
+// parameter — and in a constructor-injected Spring codebase that is where
+// nearly every real dependency edge lives. parseKotlinFields never sees it:
+// the container body handed to it starts after the opening brace.
+function parseKotlinCtorFields(header) {
+  const open = header.indexOf('(');
+  if (open < 0) return [];
+  let depth = 0;
+  let close = -1;
+  for (let i = open; i < header.length; i++) {
+    if (header[i] === '(') depth++;
+    else if (header[i] === ')' && --depth === 0) { close = i; break; }
+  }
+  if (close < 0) return [];
+  const fields = [];
+  for (const part of splitParamsTopLevel(header.substring(open + 1, close))) {
+    const m = part.trim().match(
+      new RegExp(`^(?:@[\\w.]+(?:\\([^)]*\\))?\\s+)*(?:${KOTLIN_MODIFIERS}\\s+)*(val|var)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*:\\s*([^=]+?)\\s*(?:=\\s*(.+))?$`),
+    );
+    if (!m) continue; // a plain parameter, not a property
+    fields.push({
+      name: m[2].trim(),
+      type: m[3].trim(),
+      default: (m[4] || '').trim(),
+      mutable: m[1] === 'var',
+      ctor: true,
+    });
   }
   return fields;
 }
@@ -1416,6 +1518,25 @@ class QuarkFolderEngine {
     '.cjs': /\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g,
     '.ts': /\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g,
     '.rb': /^[ \t]*def\s+(?:self\.)?([A-Za-z_][A-Za-z0-9_]*[?!=]?)/gm,
+    // Deliberately blind to receivers: take whatever identifier sits directly
+    // before the parameter list. Sharing the parser's receiver pattern here is
+    // what let `fun <T> List<T>.headOrNull()` vanish from both sides at once.
+    '.kt': /\bfun\b[^(\n]*?([A-Za-z_][A-Za-z0-9_]*)\s*\(/g,
+    '.kts': /\bfun\b[^(\n]*?([A-Za-z_][A-Za-z0-9_]*)\s*\(/g,
+  };
+
+  // How a scanned name is matched against the folder names actually built.
+  // The default is exact equality; a language whose parser encodes more into
+  // the folder name than the naive scan can see declares a comparison here.
+  static SYMBOL_FOLDER_MATCHERS = {
+    // The parser names an extension function after its receiver
+    // (`List<T>.headOrNull` becomes the folder `List_T_.headOrNull`), while
+    // the scan above sees only `headOrNull`. Comparing final segments keeps
+    // the audit ignorant of receiver spelling, which is precisely the thing it
+    // must not learn from the parser, without reporting every extension
+    // function as a gap.
+    '.kt': (name, built) => [...built].some((b) => b.split('.').pop() === name),
+    '.kts': (name, built) => [...built].some((b) => b.split('.').pop() === name),
   };
 
   // A language whose method names carry characters safeName() flattens must
@@ -1468,10 +1589,9 @@ class QuarkFolderEngine {
     for (const file of this.expectedSymbols) {
       const built = collectFnNames(path.join(this.quarkDir, file.fileFolderName));
       const encode = QuarkFolderEngine.FOLDER_NAME_ENCODERS[file.ext] || ((n) => n);
-      const missing = [...file.names].filter((name) => {
-        const folder = encode(name);
-        return !built.has(safeName(folder)) && !built.has(folder);
-      });
+      const matches = QuarkFolderEngine.SYMBOL_FOLDER_MATCHERS[file.ext] ||
+        ((name, names) => names.has(safeName(name)) || names.has(name));
+      const missing = [...file.names].filter((name) => !matches(encode(name), built));
       expected += file.names.size;
       matched += file.names.size - missing.length;
       if (missing.length) gaps.push({ relPath: file.relPath, missing });
@@ -1672,6 +1792,39 @@ class QuarkFolderEngine {
     let openedOnce = false;
     let symStart = 0;
     let pendingAnnotations = [];
+    // Kotlin only: a declaration whose `(` is still open spans more lines, so
+    // we cannot yet tell a block body (`) {`) from an expression body (`) =`)
+    // or from no body at all (`class Foo(val a: Int)`).
+    const isKotlin = KOTLIN_EXTENSIONS.has(ext);
+    const parenDelta = (s) => (s.match(/\(/g) || []).length - (s.match(/\)/g) || []).length;
+    // A header that completes without `{` on its own line is not necessarily
+    // bodyless: Kotlin allows the opening brace on the following line. Closing
+    // the symbol on sight made `class Service\n{` emit an empty class and
+    // reparent its members as siblings, and cost a function its whole body
+    // while leaking that body's locals to file level. Blank lines and comments
+    // may sit in between, so look past them before deciding.
+    const opensBlockAhead = (from) => {
+      let inBlockComment = false;
+      for (let j = from; j < lines.length; j++) {
+        let t = lines[j].trim();
+        if (inBlockComment) {
+          const end = t.indexOf('*/');
+          if (end < 0) continue;
+          t = t.slice(end + 2).trim();
+          inBlockComment = false;
+        }
+        while (t.startsWith('/*')) {
+          const end = t.indexOf('*/', 2);
+          if (end < 0) { inBlockComment = true; t = ''; break; }
+          t = t.slice(end + 2).trim();
+        }
+        if (!t || t.startsWith('//')) continue;
+        return t.startsWith('{');
+      }
+      return false;
+    };
+    let awaitingSignature = false;
+    let signatureDepth = 0;
 
     const finishSymbol = (endLine) => {
       if (!cur) return;
@@ -1701,33 +1854,53 @@ class QuarkFolderEngine {
       }
 
       if (cur.kind === 'struct' || cur.kind === 'union' || cur.kind === 'enum' ||
-          cur.kind === 'class' || cur.kind === 'namespace' || cur.kind === 'interface' || cur.kind === 'record') {
+          cur.kind === 'class' || cur.kind === 'namespace' || cur.kind === 'interface' ||
+          cur.kind === 'record' || cur.kind === 'object') {
         const bodyOpen = body.indexOf('{');
         const bodyClose = body.lastIndexOf('}');
+        const emitField = (f) => {
+          const fDir = path.join(symQuarkPath, `field__${safeName(f.name)}`);
+          mkdirSync(fDir);
+          if (f.type) mkdirSync(path.join(fDir, `type__${safeName(f.type).substring(0, 60)}`));
+          if (f.mutable !== undefined) mkdirSync(path.join(fDir, f.mutable ? 'mutability__var' : 'mutability__val'));
+          if (f.ctor) mkdirSync(path.join(fDir, 'bound__constructor'));
+          if (f.default) mkdirSync(path.join(fDir, `default__${safeLiteralName(f.default, f.name).substring(0, 60)}`));
+          // Kotlin forbids an uninitialized non-null property outright, so the
+          // Zig/Java "uninit hazard" reading does not transfer: a bare
+          // `val repo: Repo` in a primary constructor is a required injection,
+          // not a hole.
+          else if (!isKotlin) mkdirSync(path.join(fDir, `default__missing__uninit_hazard`));
+          else if (!f.ctor) mkdirSync(path.join(fDir, 'default__missing'));
+        };
+
+        // A Kotlin primary constructor lives in the header, before the brace —
+        // and for a data class or an injected bean it may be the only place
+        // any property is declared at all.
+        if (isKotlin) {
+          for (const f of parseKotlinCtorFields(bodyOpen >= 0 ? body.substring(0, bodyOpen) : body)) emitField(f);
+        }
+
         if (bodyOpen >= 0 && bodyClose > bodyOpen) {
           const inner = body.substring(bodyOpen + 1, bodyClose);
           let fields = [];
           if (ext === '.java') {
             fields = parseJavaFields(inner);
+          } else if (isKotlin) {
+            fields = parseKotlinFields(inner);
           } else if (JS_FAMILY_EXTENSIONS.has(ext)) {
             fields = parseJSFields(inner);
           } else {
             fields = parseZigStructFields(inner);
           }
-          for (const f of fields) {
-            const fDir = path.join(symQuarkPath, `field__${safeName(f.name)}`);
-            mkdirSync(fDir);
-            if (f.type) mkdirSync(path.join(fDir, `type__${safeName(f.type).substring(0, 60)}`));
-            if (f.default) mkdirSync(path.join(fDir, `default__${safeLiteralName(f.default, f.name).substring(0, 60)}`));
-            else mkdirSync(path.join(fDir, `default__missing__uninit_hazard`));
-          }
+          for (const f of fields) emitField(f);
           // RECURSE into the container body
-          if (/(?:^|\n)\s*(?:pub\s+)?(?:export\s+|extern\s+(?:\"[^\"]*\"\s+)?|noinline\s+|inline\s+)?fn\s+[a-zA-Z0-9_]+\s*\(|(?:^|\n)\s*(?:pub\s+)?const\s+[a-zA-Z0-9_]+\s*=\s*(?:extern\s+|packed\s+)?(?:struct|union|enum)|(?:^|\n)\s*(?:template\s*<[^>]*>\s*)?(?:class|struct)\s+[a-zA-Z_]|\b(?:class|interface|enum|record)\s+[a-zA-Z0-9_]+|\b[a-zA-Z0-9_]+\s+[a-zA-Z0-9_]+\s*\([^;]*\{|\b(?:function)\b|=>/.test(inner)) {
+          if (/(?:^|\n)\s*(?:pub\s+)?(?:export\s+|extern\s+(?:\"[^\"]*\"\s+)?|noinline\s+|inline\s+)?fn\s+[a-zA-Z0-9_]+\s*\(|(?:^|\n)\s*(?:pub\s+)?const\s+[a-zA-Z0-9_]+\s*=\s*(?:extern\s+|packed\s+)?(?:struct|union|enum)|(?:^|\n)\s*(?:template\s*<[^>]*>\s*)?(?:class|struct)\s+[a-zA-Z_]|\b(?:class|interface|enum|record)\s+[a-zA-Z0-9_]+|\b[a-zA-Z0-9_]+\s+[a-zA-Z0-9_]+\s*\([^;]*\{|\b(?:function)\b|=>/.test(inner) ||
+              (isKotlin && /\bfun\s+[a-zA-Z_]|\bobject\s+[a-zA-Z_]|\bcompanion\s+object\b/.test(inner))) {
             const innerLines = inner.split('\n');
             this.processCStyle(inner, innerLines, ext, symQuarkPath, relPath);
           }
         }
-      } else if (cur.kind === 'fn' && (ext === '.zig' || ext === '.java')) {
+      } else if (cur.kind === 'fn' && (ext === '.zig' || ext === '.java' || isKotlin)) {
         const open = body.indexOf('{');
         const close = body.lastIndexOf('}');
         if (open >= 0 && close > open) {
@@ -1757,7 +1930,7 @@ class QuarkFolderEngine {
       const stripped = line.replace(/"(?:[^"\\]|\\.)*"/g, '').replace(/\/\/.*/g, '');
       const openers = (stripped.match(/\{/g) || []).length;
       const closers = (stripped.match(/\}/g) || []).length;
-      if (ext === '.java' && !cur) {
+      if ((ext === '.java' || KOTLIN_EXTENSIONS.has(ext)) && !cur) {
         const annM = line.match(/^\s*@([a-zA-Z0-9_]+)(?:\((.*)\))?/);
         if (annM) {
           pendingAnnotations.push({ name: annM[1], args: annM[2] || '' });
@@ -1811,6 +1984,23 @@ class QuarkFolderEngine {
           } else if ((m = line.match(/^\s*(?:public\s+|protected\s+|private\s+|static\s+|final\s+|transient\s+|volatile\s+)*[a-zA-Z0-9_<>\[\]]+\s+([a-zA-Z0-9_]+)\s*(?:=|;)/))) {
             name = m[1]; kind = 'var'; role = 'state';
           }
+        } else if (KOTLIN_EXTENSIONS.has(ext)) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*') || trimmed.length === 0 || trimmed.startsWith('package ') || trimmed.startsWith('import ')) {
+          } else if ((m = line.match(new RegExp(`^\\s*((?:${KOTLIN_MODIFIERS}\\s+|enum\\s+)*)(class|interface|object)\\s+([a-zA-Z_][a-zA-Z0-9_]*)`)))) {
+            name = m[3];
+            kind = m[2] === 'class' && /\benum\b/.test(m[1]) ? 'enum' : m[2];
+            role = 'type';
+          } else if ((m = line.match(new RegExp(`^\\s*(?:${KOTLIN_MODIFIERS}\\s+)*object\\b`))) && /\bcompanion\b/.test(line)) {
+            // `companion object` carries no name but does carry the type's
+            // statics; without a node its members would float up as siblings
+            // of the enclosing class's own members.
+            name = 'companion'; kind = 'object'; role = 'type';
+          } else if ((m = line.match(new RegExp(`^\\s*(?:${KOTLIN_MODIFIERS}\\s+)*fun\\s+${KOTLIN_FUN_NAME}\\s*\\(`)))) {
+            name = m[1]; kind = 'fn'; role = guessRole(name);
+          } else if ((m = line.match(new RegExp(`^\\s*(?:${KOTLIN_MODIFIERS}\\s+)*(?:val|var)\\s+([a-zA-Z_][a-zA-Z0-9_]*)`)))) {
+            name = m[1]; kind = 'var'; role = 'state';
+          }
         } else if (JS_FAMILY_EXTENSIONS.has(ext)) {
           const trimmed = line.trim();
           if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*') || trimmed.length === 0 || trimmed.startsWith('import ') || trimmed.startsWith('export *')) {
@@ -1831,12 +2021,30 @@ class QuarkFolderEngine {
           symStart = i;
           depth = openers - closers;
           openedOnce = openers > 0;
+          if (isKotlin) {
+            signatureDepth = parenDelta(stripped);
+            awaitingSignature = signatureDepth > 0;
+          }
           if (cur.kind === 'var' && line.includes(';')) finishSymbol(i + 1);
           else if (openedOnce && depth <= 0) finishSymbol(i + 1);
+          // Kotlin, signature complete on this line, no `{` opened and none on
+          // the next meaningful line: an expression body or a bodyless
+          // declaration. Nothing further belongs to this symbol, and waiting
+          // for a brace that never comes would swallow the file.
+          else if (isKotlin && !awaitingSignature && !openedOnce && !opensBlockAhead(i + 1)) finishSymbol(i + 1);
         }
       } else {
         depth += openers - closers;
         if (openers > 0) openedOnce = true;
+        if (awaitingSignature) {
+          signatureDepth += parenDelta(stripped);
+          if (signatureDepth <= 0) {
+            awaitingSignature = false;
+            // Same lookahead as above: a multi-line signature may also place
+            // its opening brace on the line after the closing paren.
+            if (!openedOnce && !opensBlockAhead(i + 1)) { finishSymbol(i + 1); continue; }
+          }
+        }
         if (cur.kind === 'var' && line.includes(';')) finishSymbol(i + 1);
         else if (openedOnce && depth <= 0) finishSymbol(i + 1);
       }
