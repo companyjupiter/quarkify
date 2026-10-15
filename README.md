@@ -155,6 +155,8 @@ Prefer a data-only JSON config for shared or untrusted analysis settings.
 }
 ```
 
+`name` labels the console output, the viewer title, and the graph root; it defaults to the `srcDir` folder name.
+
 `roleRules` assigns roles when a symbol name contains a key (case-insensitive).
 
 Executable JavaScript configs (`configs/*.mjs`) are still supported for trusted

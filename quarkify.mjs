@@ -124,6 +124,12 @@ function validateConfig(config) {
       config.sourceFiles.some((file) => typeof file !== 'string' || file.trim() === '')) {
     throw new Error("Config field 'sourceFiles' must be an array of non-empty strings.");
   }
+  if (config.name === undefined) {
+    // `name` labels the console banner, the viewer title, and the graph root.
+    config.name = path.basename(path.resolve(config.srcDir)) || 'project';
+  } else if (typeof config.name !== 'string' || config.name.trim() === '') {
+    throw new Error("Config field 'name' must be a non-empty string.");
+  }
   if (config.perfData !== undefined && (!config.perfData || typeof config.perfData !== 'object' || Array.isArray(config.perfData))) {
     throw new Error("Config field 'perfData' must be an object.");
   }

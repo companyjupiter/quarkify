@@ -158,6 +158,46 @@ test('JSON config is validated before analysis starts', async () => {
   });
 });
 
+test('a config without name labels the run with the srcDir folder name', async () => {
+  await withTempWorkspace(async (tmp) => {
+    const srcDir = path.join(tmp, 'my-service');
+    const outDir = path.join(tmp, 'out');
+    const configPath = path.join(tmp, 'config.json');
+
+    await mkdir(srcDir, { recursive: true });
+    await writeFile(path.join(srcDir, 'sample.js'), 'export function sampleThing() { return 1; }\n', 'utf8');
+    await writeFile(configPath, JSON.stringify({ srcDir, outDir, sourceFiles: ['sample.js'] }), 'utf8');
+
+    const result = runQuarkify(configPath);
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.doesNotMatch(result.stdout, /undefined/);
+    const html = await readFile(path.join(outDir, 'index.html'), 'utf8');
+    assert.match(html, /<title>[^<]*my-service<\/title>/);
+    assert.doesNotMatch(html, /undefined<\/title>/);
+  });
+});
+
+test('a non-string config name is rejected before analysis starts', async () => {
+  await withTempWorkspace(async (tmp) => {
+    const outDir = path.join(tmp, 'out');
+    const configPath = path.join(tmp, 'config.json');
+
+    await writeFile(configPath, JSON.stringify({
+      name: 42,
+      srcDir: tmp,
+      outDir,
+      sourceFiles: ['sample.js'],
+    }), 'utf8');
+
+    const result = runQuarkify(configPath);
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr || result.stdout, /'name' must be a non-empty string/);
+    assert.ok(!existsSync(outDir));
+  });
+});
+
 test('executable config requires explicit permission flag', async () => {
   await withTempWorkspace(async (tmp) => {
     const srcDir = path.join(tmp, 'src');
