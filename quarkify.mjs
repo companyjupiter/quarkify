@@ -260,6 +260,14 @@ function parseZigStructFields(body) {
   return fields;
 }
 
+// A Java type as written before a member name. The type argument list may hold
+// commas and spaces (`Map<String, Object>`, `ResponseEntity<List<UserDto>>`); a
+// bare character class without them dropped every such method and field.
+const JAVA_TYPE = String.raw`[a-zA-Z0-9_@.]+(?:\s*<[^()=;{}]*>)?(?:\s*\[\s*\])*`;
+const JAVA_FIELD_RE = new RegExp(String.raw`^\s*(?:public\s+|protected\s+|private\s+|static\s+|final\s+|transient\s+|volatile\s+)*(${JAVA_TYPE})\s+([a-zA-Z0-9_]+)\s*(?:=\s*([^;]+))?;\s*$`);
+const JAVA_METHOD_RE = new RegExp(String.raw`^\s*(?:public\s+|protected\s+|private\s+|static\s+|final\s+|synchronized\s+|abstract\s+|default\s+|native\s+|<[^>]+>\s*)*${JAVA_TYPE}\s+([a-zA-Z0-9_]+)\s*\([^;]*$`);
+const JAVA_VAR_RE = new RegExp(String.raw`^\s*(?:public\s+|protected\s+|private\s+|static\s+|final\s+|transient\s+|volatile\s+)*${JAVA_TYPE}\s+([a-zA-Z0-9_]+)\s*(?:=|;)`);
+
 // ─── Java class/interface 필드 파서 (Java Class/Interface Field Parser) ───
 function parseJavaFields(body) {
   const fields = [];
@@ -267,7 +275,7 @@ function parseJavaFields(body) {
   for (const raw of lines) {
     let l = raw.replace(/\/\/.*/g, '').trim();
     if (!l || l.includes('(') || l.includes(')') || l.startsWith('class ') || l.startsWith('interface ') || l.startsWith('public class ')) continue;
-    const m = l.match(/^\s*(?:public\s+|protected\s+|private\s+|static\s+|final\s+|transient\s+|volatile\s+)*([a-zA-Z0-9_<>\[\]]+)\s+([a-zA-Z0-9_]+)\s*(?:=\s*([^;]+))?;\s*$/);
+    const m = l.match(JAVA_FIELD_RE);
     if (!m) continue;
     fields.push({ name: m[2].trim(), type: m[1].trim(), default: (m[3] || '').trim() });
   }
@@ -1721,8 +1729,10 @@ class QuarkFolderEngine {
             if (f.default) mkdirSync(path.join(fDir, `default__${safeLiteralName(f.default, f.name).substring(0, 60)}`));
             else mkdirSync(path.join(fDir, `default__missing__uninit_hazard`));
           }
-          // RECURSE into the container body
-          if (/(?:^|\n)\s*(?:pub\s+)?(?:export\s+|extern\s+(?:\"[^\"]*\"\s+)?|noinline\s+|inline\s+)?fn\s+[a-zA-Z0-9_]+\s*\(|(?:^|\n)\s*(?:pub\s+)?const\s+[a-zA-Z0-9_]+\s*=\s*(?:extern\s+|packed\s+)?(?:struct|union|enum)|(?:^|\n)\s*(?:template\s*<[^>]*>\s*)?(?:class|struct)\s+[a-zA-Z_]|\b(?:class|interface|enum|record)\s+[a-zA-Z0-9_]+|\b[a-zA-Z0-9_]+\s+[a-zA-Z0-9_]+\s*\([^;]*\{|\b(?:function)\b|=>/.test(inner)) {
+          // RECURSE into the container body. A member whose type ends in a type
+          // argument list or array brackets (`Map<String, Object> toMap() {`) has no
+          // `word word(` pair, so it is matched by what precedes its name instead.
+          if (/(?:^|\n)\s*(?:pub\s+)?(?:export\s+|extern\s+(?:\"[^\"]*\"\s+)?|noinline\s+|inline\s+)?fn\s+[a-zA-Z0-9_]+\s*\(|(?:^|\n)\s*(?:pub\s+)?const\s+[a-zA-Z0-9_]+\s*=\s*(?:extern\s+|packed\s+)?(?:struct|union|enum)|(?:^|\n)\s*(?:template\s*<[^>]*>\s*)?(?:class|struct)\s+[a-zA-Z_]|\b(?:class|interface|enum|record)\s+[a-zA-Z0-9_]+|\b[a-zA-Z0-9_]+\s+[a-zA-Z0-9_]+\s*\([^;]*\{|[>\]]\s+[a-zA-Z0-9_]+\s*\([^;]*\{|\b(?:function)\b|=>/.test(inner)) {
             const innerLines = inner.split('\n');
             this.processCStyle(inner, innerLines, ext, symQuarkPath, relPath);
           }
@@ -1806,9 +1816,9 @@ class QuarkFolderEngine {
           if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*') || trimmed.length === 0 || trimmed.startsWith('package ') || trimmed.startsWith('import ')) {
           } else if ((m = line.match(/^\s*(?:public\s+|protected\s+|private\s+|abstract\s+|static\s+|final\s+|sealed\s+|non-sealed\s+)*(class|interface|enum|record)\s+([a-zA-Z0-9_]+)/))) {
             name = m[2]; kind = m[1]; role = 'type';
-          } else if ((m = line.match(/^\s*(?:public\s+|protected\s+|private\s+|static\s+|final\s+|synchronized\s+|abstract\s+|default\s+|native\s+|<[^>]+>\s*)*[a-zA-Z0-9_<>\[\]@\.]+\s+([a-zA-Z0-9_]+)\s*\([^;]*$/)) && !line.includes('=') && !line.match(/\breturn\b/) && !line.match(/^\s*(?:if|while|for|switch|return)\b/)) {
+          } else if ((m = line.match(JAVA_METHOD_RE)) && !line.includes('=') && !line.match(/\breturn\b/) && !line.match(/^\s*(?:if|while|for|switch|return)\b/)) {
             name = m[1]; kind = 'fn'; role = guessRole(name);
-          } else if ((m = line.match(/^\s*(?:public\s+|protected\s+|private\s+|static\s+|final\s+|transient\s+|volatile\s+)*[a-zA-Z0-9_<>\[\]]+\s+([a-zA-Z0-9_]+)\s*(?:=|;)/))) {
+          } else if ((m = line.match(JAVA_VAR_RE))) {
             name = m[1]; kind = 'var'; role = 'state';
           }
         } else if (JS_FAMILY_EXTENSIONS.has(ext)) {

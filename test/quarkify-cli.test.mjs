@@ -491,3 +491,52 @@ test('explicit sourceFiles cannot escape srcDir through a symlink', async (t) =>
     assert.match(result.stderr || result.stdout, /outside srcDir/i);
   });
 });
+
+test('Java members typed with multi-argument generics are materialized', async () => {
+  await withTempWorkspace(async (tmp) => {
+    const srcDir = path.join(tmp, 'src');
+    const outDir = path.join(tmp, 'out');
+    const configPath = path.join(tmp, 'config.json');
+
+    await mkdir(srcDir, { recursive: true });
+    await writeFile(path.join(srcDir, 'Repo.java'), [
+      'public class Repo {',
+      '    private Map<String, Integer> index;',
+      '',
+      '    public Map<String, Object> toMap() {',
+      '        return null;',
+      '    }',
+      '',
+      '    public Map<String,Object> compact() {',
+      '        return null;',
+      '    }',
+      '',
+      '    public ResponseEntity<List<UserDto>> list() {',
+      '        return null;',
+      '    }',
+      '',
+      '    public Optional<String>[] many() {',
+      '        return null;',
+      '    }',
+      '}',
+      '',
+    ].join('\n'), 'utf8');
+    await writeFile(configPath, JSON.stringify({
+      name: 'java-generics',
+      srcDir,
+      outDir,
+      sourceFiles: ['Repo.java'],
+    }), 'utf8');
+
+    const result = runQuarkify(configPath);
+
+    assert.equal(result.status, 0, result.stderr);
+    const classDir = path.join(outDir, 'quark', 'file__Repo.java', 'class__Repo');
+    const members = await readdir(classDir);
+    for (const fn of ['toMap', 'compact', 'list', 'many']) {
+      assert.ok(members.includes(`fn__${fn}`), `missing fn__${fn} in ${members.join(', ')}`);
+    }
+    assert.ok(members.includes('field__index'), `missing field__index in ${members.join(', ')}`);
+    assert.deepEqual(await readdir(path.join(classDir, 'field__index')), ['default__missing__uninit_hazard', 'type__Map_String__Integer_']);
+  });
+});
