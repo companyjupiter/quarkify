@@ -2898,10 +2898,17 @@ async function main() {
     }
     console.log(`[+] 스캔 완료: 총 ${resolvedFiles.length}개 파일 매칭됨.\n`);
   } else {
-    resolvedFiles = CONFIG.sourceFiles.map((rel) => {
-      validateSourceFilePath(srcRoot, rel);
-      return rel;
-    });
+    // The same file listed twice ('a.js', 'a.js' or 'a.js', './a.js') used to be
+    // decomposed twice: an exact repeat tripped the folder-name collision path
+    // and renamed the file's folder to a hashed one, a respelled one got a second
+    // tree, and every count in the summary was inflated. Keep the first spelling.
+    const seen = new Set();
+    for (const rel of CONFIG.sourceFiles) {
+      const abs = validateSourceFilePath(srcRoot, rel);
+      if (seen.has(abs)) continue;
+      seen.add(abs);
+      resolvedFiles.push(rel);
+    }
   }
 
   if (resolvedFiles.length === 0) {

@@ -491,3 +491,30 @@ test('explicit sourceFiles cannot escape srcDir through a symlink', async (t) =>
     assert.match(result.stderr || result.stdout, /outside srcDir/i);
   });
 });
+
+test('a source file listed more than once is decomposed once', async () => {
+  await withTempWorkspace(async (tmp) => {
+    const srcDir = path.join(tmp, 'src');
+    const outDir = path.join(tmp, 'out');
+    const configPath = path.join(tmp, 'config.json');
+
+    await mkdir(srcDir, { recursive: true });
+    await writeFile(path.join(srcDir, 'a.js'), 'export function alpha() { return 1; }\n', 'utf8');
+    await writeFile(configPath, JSON.stringify({
+      name: 'duplicate-source-files',
+      srcDir,
+      outDir,
+      sourceFiles: ['a.js', 'a.js', './a.js'],
+    }), 'utf8');
+
+    const result = runQuarkify(configPath);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stdout, /충돌/);
+    assert.equal(result.stdout.match(/분해 중:/g).length, 1);
+    assert.deepEqual(
+      (await readdir(path.join(outDir, 'quark'))).filter((name) => name.startsWith('file__')),
+      ['file__a.js'],
+    );
+  });
+});
