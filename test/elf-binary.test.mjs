@@ -44,12 +44,15 @@ function buildMinimalElf() {
   const NAME_STRTAB = 15;
   const NAME_SHSTRTAB = 23;
 
-  const strtab = Buffer.from('\0definedFunc\0externalFunc\0', 'binary');
+  const strtab = Buffer.from('\0definedFunc\0externalFunc\0GLIBC_2.2.5\0commonVar\0', 'binary');
   const NAME_DEFINED = 1;
   const NAME_EXTERNAL = 13;
+  const NAME_VERSION = 26;
+  const NAME_COMMON = 38;
 
-  // 3 entries: null, a defined FUNC in .text, an undefined FUNC.
-  const symtab = Buffer.alloc(3 * 24);
+  // 5 entries: null, a defined FUNC in .text, an undefined FUNC, and two
+  // symbols whose st_shndx is a reserved value rather than a section index.
+  const symtab = Buffer.alloc(5 * 24);
   const writeSym = (i, nameOff, info, shndx, value, size) => {
     const o = i * 24;
     symtab.writeUInt32LE(nameOff, o);
@@ -62,6 +65,8 @@ function buildMinimalElf() {
   writeSym(0, 0, 0, 0, 0, 0);
   writeSym(1, NAME_DEFINED, (1 << 4) | 2, 1, 0x1000, 512);  // GLOBAL FUNC in .text
   writeSym(2, NAME_EXTERNAL, (1 << 4) | 2, 0, 0, 0);        // GLOBAL FUNC, UNDEF
+  writeSym(3, NAME_VERSION, (1 << 4) | 1, 0xfff1, 0, 0);    // GLOBAL OBJECT, SHN_ABS (a version definition)
+  writeSym(4, NAME_COMMON, (1 << 4) | 1, 0xfff2, 8, 4);     // GLOBAL OBJECT, SHN_COMMON
 
   const textBody = Buffer.alloc(16);
 
@@ -144,6 +149,10 @@ test('an ELF binary is quarkized by symbol, section, address and size', async ()
     assert.ok(has(path.join('sym__definedFunc', 'bind__GLOBAL')), 'symbol binding');
     // What this binary demands from somebody else.
     assert.ok(has(path.join('section__UNDEF', 'sym__externalFunc')), 'undefined symbol');
+    // Reserved section indexes are named, not read as an out-of-range index.
+    assert.ok(has(path.join('section__ABS', 'sym__GLIBC_2.2.5')), 'absolute symbol');
+    assert.ok(has(path.join('section__COMMON', 'sym__commonVar')), 'common symbol');
+    assert.ok(!entries.some((entry) => entry.includes('section__shndx_')), 'no raw reserved index');
   });
 });
 

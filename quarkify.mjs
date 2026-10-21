@@ -1252,6 +1252,8 @@ function annotateGeneric(text, dir) {
 const ELF_ST_TYPE = { 0: 'NOTYPE', 1: 'OBJECT', 2: 'FUNC', 3: 'SECTION', 4: 'FILE', 6: 'TLS', 10: 'GNU_IFUNC' };
 const ELF_ST_BIND = { 0: 'LOCAL', 1: 'GLOBAL', 2: 'WEAK', 10: 'GNU_UNIQUE' };
 const ELF_MACHINE = { 3: 'x86', 40: 'ARM', 62: 'x86_64', 183: 'AArch64', 243: 'RISC-V' };
+// Reserved st_shndx values name no section; reading them as an index yields `shndx_65521`.
+const ELF_SPECIAL_SHNDX = { 0: 'UNDEF', 0xfff1: 'ABS', 0xfff2: 'COMMON' };
 
 function isElfFile(absPath) {
   let fd;
@@ -1325,7 +1327,7 @@ function readElf64(absPath) {
         type: ELF_ST_TYPE[info & 0xf] ?? `TYPE_${info & 0xf}`,
         value,
         size: Number(buf.readBigUInt64LE(o + 16)),
-        section: shndx === 0 ? 'UNDEF' : (sections[shndx]?.name || `shndx_${shndx}`),
+        section: ELF_SPECIAL_SHNDX[shndx] ?? (sections[shndx]?.name || `shndx_${shndx}`),
       });
     }
   }
