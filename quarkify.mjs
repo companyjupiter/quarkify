@@ -1224,7 +1224,7 @@ function annotateGeneric(text, dir) {
   for (const c of children) ensureDir(path.join(dir, safeName(c)));
 
   const eqIdx = stmt.indexOf('=');
-  if (eqIdx > 0 && !stmt.startsWith('if') && !stmt.includes('==') &&
+  if (eqIdx > 0 && !/^if\b/.test(stmt) && !stmt.includes('==') &&
       !stmt.includes('!=') && !stmt.includes('<=') && !stmt.includes('>=')) {
     const rhs = stmt.substring(eqIdx + 1).trim();
     const decomp = decomposeZigExpr(rhs);
@@ -1891,7 +1891,7 @@ class QuarkFolderEngine {
       ensureDir(stmtPath);
       for (const c of children) ensureDir(path.join(stmtPath, safeName(c)));
       const eqIdx = stmt.indexOf('=');
-      if (eqIdx > 0 && !stmt.startsWith('if') && !stmt.includes('==') &&
+      if (eqIdx > 0 && !/^if\b/.test(stmt) && !stmt.includes('==') &&
           !stmt.includes('!=') && !stmt.includes('<=') && !stmt.includes('>=')) {
         const rhs = stmt.substring(eqIdx + 1).trim();
         const decomp = decomposeZigExpr(rhs);

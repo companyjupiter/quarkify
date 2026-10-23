@@ -491,3 +491,44 @@ test('explicit sourceFiles cannot escape srcDir through a symlink', async (t) =>
     assert.match(result.stderr || result.stdout, /outside srcDir/i);
   });
 });
+
+test('an assignment to a name starting with "if" still gets its right-hand side decomposed', async () => {
+  await withTempWorkspace(async (tmp) => {
+    const srcDir = path.join(tmp, 'src');
+    const outDir = path.join(tmp, 'out');
+    const configPath = path.join(tmp, 'config.json');
+
+    await mkdir(srcDir, { recursive: true });
+    await writeFile(path.join(srcDir, 'sample.zig'), [
+      'fn pick(a: u32) u32 {',
+      '    ifIndex = a + 2;',
+      '    return a;',
+      '}',
+      '',
+    ].join('\n'), 'utf8');
+    await writeFile(path.join(srcDir, 'sample.cpp'), [
+      'int pick(int a) {',
+      '    total = a + 1;',
+      '    ifIndex = a + 2;',
+      '    return a;',
+      '}',
+      '',
+    ].join('\n'), 'utf8');
+    await writeFile(configPath, JSON.stringify({
+      name: 'if-prefixed-assignment',
+      srcDir,
+      outDir,
+      sourceFiles: ['sample.zig', 'sample.cpp'],
+    }), 'utf8');
+
+    const result = runQuarkify(configPath);
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const quarkRoot = path.join(outDir, 'quark');
+    const entries = (await listRelativeEntries(quarkRoot)).map((entry) => entry.split(path.sep).join('/'));
+    const ifIndexAdds = (file) => entries.filter((entry) =>
+      entry.startsWith(`${file}/fn__pick/`) && entry.endsWith('/expr/bin_op__add/rhs__2'));
+    assert.equal(ifIndexAdds('file__sample.zig').length, 1, entries.join('\n'));
+    assert.equal(ifIndexAdds('file__sample.cpp').length, 1, entries.join('\n'));
+  });
+});
