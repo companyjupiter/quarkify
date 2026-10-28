@@ -491,3 +491,95 @@ test('explicit sourceFiles cannot escape srcDir through a symlink', async (t) =>
     assert.match(result.stderr || result.stdout, /outside srcDir/i);
   });
 });
+
+test('statements inside method bodies are not recorded as class fields', async () => {
+  await withTempWorkspace(async (tmp) => {
+    const srcDir = path.join(tmp, 'src');
+    const outDir = path.join(tmp, 'out');
+    const configPath = path.join(tmp, 'config.json');
+
+    await mkdir(srcDir, { recursive: true });
+    await writeFile(path.join(srcDir, 'Svc.java'), [
+      'public class Svc {',
+      '    private int n;',
+      '',
+      '    String name() {',
+      '        String label = "{";',
+      '        return null;',
+      '    }',
+      '}',
+      '',
+    ].join('\n'), 'utf8');
+    await writeFile(path.join(srcDir, 'cart.ts'), [
+      'export class Cart {',
+      '  total = 0;',
+      '',
+      '  sum(items: number[]): number {',
+      '    let acc = 0;',
+      '    for (const n of items) {',
+      '      if (n < 0) {',
+      '        continue;',
+      '      }',
+      '      acc = acc + n;',
+      '    }',
+      '    return acc;',
+      '  }',
+      '}',
+      '',
+    ].join('\n'), 'utf8');
+    await writeFile(configPath, JSON.stringify({
+      name: 'method-body-fields',
+      srcDir,
+      outDir,
+      sourceFiles: ['Svc.java', 'cart.ts'],
+    }), 'utf8');
+
+    const result = runQuarkify(configPath);
+
+    assert.equal(result.status, 0, result.stderr);
+    const fieldsOf = async (dir) => (await readdir(dir)).filter((name) => name.startsWith('field__'));
+    assert.deepEqual(await fieldsOf(path.join(outDir, 'quark', 'file__Svc.java', 'class__Svc')), ['field__n']);
+    assert.deepEqual(await fieldsOf(path.join(outDir, 'quark', 'file__cart.ts', 'class__Cart')), ['field__total']);
+  });
+});
+
+test('braces and declarations inside block comments do not change the class fields', async () => {
+  await withTempWorkspace(async (tmp) => {
+    const srcDir = path.join(tmp, 'src');
+    const outDir = path.join(tmp, 'out');
+    const configPath = path.join(tmp, 'config.json');
+
+    await mkdir(srcDir, { recursive: true });
+    await writeFile(path.join(srcDir, 'Box.java'), [
+      'public class Box {',
+      '    /* legacy layout: { width, height } was split */',
+      '    private int width;',
+      '    /* opening brace { kept for old parsers */',
+      '    private int height;',
+      '    /*',
+      '    private int depth;',
+      '    */',
+      "    private char open = '{'; /* a { here too */",
+      '',
+      '    public int area() {',
+      '        return width * height;',
+      '    }',
+      '}',
+      '',
+    ].join('\n'), 'utf8');
+    await writeFile(configPath, JSON.stringify({
+      name: 'block-comment-fields',
+      srcDir,
+      outDir,
+      sourceFiles: ['Box.java'],
+    }), 'utf8');
+
+    const result = runQuarkify(configPath);
+
+    assert.equal(result.status, 0, result.stderr);
+    const fields = (await readdir(path.join(outDir, 'quark', 'file__Box.java', 'class__Box')))
+      .filter((name) => name.startsWith('field__'))
+      .sort();
+    assert.deepEqual(fields, ['field__height', 'field__open', 'field__width']);
+  });
+});

@@ -245,6 +245,47 @@ function classifyPtxArg(raw, opcode) {
   return { kind: 'other', value: r, type: '' };
 }
 
+// Only a container's own declarations are fields. A statement inside a method
+// body has the same `<word> <word>;` / `<word> = ...;` shape, so `return null;`
+// surfaced as a Java field `null` of type `return`, and `continue;` or
+// `acc = acc + n;` as JS/TS fields. Yield the lines that start at brace depth 0.
+//
+// One left-to-right pass per line, so a brace inside a string, a char literal
+// or a comment is never counted; a `/* */` comment carries across lines. Block
+// comments come back blanked: a `{` in one no longer hides every later field,
+// and a commented-out declaration is not read as a field.
+function containerLevelLines(body) {
+  const out = [];
+  let depth = 0;
+  let inComment = false;
+  for (const raw of body.split('\n')) {
+    const startDepth = depth;
+    let code = '';
+    for (let i = 0; i < raw.length; i++) {
+      const c = raw[i];
+      if (inComment) {
+        if (c === '*' && raw[i + 1] === '/') { inComment = false; code += '  '; i++; } else code += ' ';
+      } else if (c === '/' && raw[i + 1] === '*') {
+        inComment = true; code += '  '; i++;
+      } else if (c === '/' && raw[i + 1] === '/') {
+        code += raw.slice(i); // the field parsers drop line comments themselves
+        break;
+      } else if (c === '"' || c === "'" || c === '`') {
+        let j = i + 1;
+        while (j < raw.length && raw[j] !== c) j += raw[j] === '\\' ? 2 : 1;
+        code += raw.slice(i, j + 1);
+        i = j;
+      } else {
+        if (c === '{') depth++;
+        else if (c === '}') depth = Math.max(0, depth - 1);
+        code += c;
+      }
+    }
+    if (startDepth === 0) out.push(code);
+  }
+  return out;
+}
+
 // ─── Zig struct 필드 파서 (Zig Struct Field Parser) ───
 function parseZigStructFields(body) {
   const fields = [];
@@ -263,8 +304,7 @@ function parseZigStructFields(body) {
 // ─── Java class/interface 필드 파서 (Java Class/Interface Field Parser) ───
 function parseJavaFields(body) {
   const fields = [];
-  const lines = body.split('\n');
-  for (const raw of lines) {
+  for (const raw of containerLevelLines(body)) {
     let l = raw.replace(/\/\/.*/g, '').trim();
     if (!l || l.includes('(') || l.includes(')') || l.startsWith('class ') || l.startsWith('interface ') || l.startsWith('public class ')) continue;
     const m = l.match(/^\s*(?:public\s+|protected\s+|private\s+|static\s+|final\s+|transient\s+|volatile\s+)*([a-zA-Z0-9_<>\[\]]+)\s+([a-zA-Z0-9_]+)\s*(?:=\s*([^;]+))?;\s*$/);
@@ -277,8 +317,7 @@ function parseJavaFields(body) {
 // ─── JS/TS class/interface 필드 파서 (JS/TS Class/Interface Field Parser) ───
 function parseJSFields(body) {
   const fields = [];
-  const lines = body.split('\n');
-  for (const raw of lines) {
+  for (const raw of containerLevelLines(body)) {
     let l = raw.replace(/\/\/.*/g, '').trim();
     if (!l || l.includes('(') || l.includes(')') || l.startsWith('class ') || l.startsWith('interface ') || l.startsWith('export class ') || l.startsWith('export interface ')) continue;
     // JS/TS 프로퍼티 정규식 (JS/TS Property Regex)
