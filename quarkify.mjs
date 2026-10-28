@@ -2740,13 +2740,32 @@ function escapeHtml(value) {
 
 function splitParamsTopLevel(text) {
   // depth-aware comma split (Metal params 의 [[ ]] 안 콤마는 무시 - ignores commas inside [[ ]] of Metal params)
+  // 문자열 리터럴과 {} 안의 콤마도 무시하고, `->` / `=>` 의 `>` 는 닫는 괄호로 세지 않는다.
+  // (Commas inside string literals and {} are ignored too, and the `>` of `->` / `=>` is not a closing bracket.)
+  // `<` / `>` are also comparisons (`sys.version_info > (3, 8)`), so a `>` only
+  // closes an open `<`, and a `<` followed by a space, `=` or `<` opens nothing.
+  // (A stack, not a counter: a stray `>` used to take the depth below zero and
+  // split inside the tuple that followed it.)
   const out = [];
-  let depth = 0, start = 0;
+  const open = [];
+  let start = 0, quote = null;
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
-    if (c === '(' || c === '[' || c === '<') depth++;
-    else if (c === ')' || c === ']' || c === '>') depth--;
-    else if (c === ',' && depth === 0) {
+    if (quote) {
+      if (c === '\\') i++;
+      else if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') quote = c;
+    else if (c === '(' || c === '[' || c === '{') open.push(c);
+    else if (c === '<') { if (!/[\s=<]/.test(text[i + 1] || '')) open.push(c); }
+    else if (c === '>') {
+      if (open[open.length - 1] === '<' && text[i - 1] !== '-' && text[i - 1] !== '=') open.pop();
+    } else if (c === ')' || c === ']' || c === '}') {
+      // A `<` still open here was a comparison after all (`f(a<b)`).
+      while (open[open.length - 1] === '<') open.pop();
+      open.pop();
+    } else if (c === ',' && open.length === 0) {
       out.push(text.substring(start, i));
       start = i + 1;
     }
