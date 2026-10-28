@@ -971,12 +971,32 @@ function emitBlockList(nodes, parentPath) {
 //   4. endless method    `def foo = expr`   — has no `end` (Ruby 3.0+)
 //   5. `=begin`/`=end`   block comment      — body may contain anything
 
+// Operator methods (`def ==`, `def <=>`, `def []=`) are ordinary Ruby methods
+// whose names are all punctuation. safeName() would flatten every one of them
+// to underscores, and `==` and `<=` would share a folder, so each is spelled out.
+const RUBY_OPERATOR_FOLDER_NAMES = {
+  '[]=': 'op_index_set', '[]': 'op_index', '<=>': 'op_cmp', '===': 'op_case_eq',
+  '==': 'op_eq', '=~': 'op_match', '!=': 'op_neq', '!~': 'op_nmatch',
+  '!@': 'op_not', '!': 'op_not', '<<': 'op_lshift', '>>': 'op_rshift',
+  '<=': 'op_le', '>=': 'op_ge', '**': 'op_pow', '+@': 'op_uplus',
+  '-@': 'op_uminus', '~@': 'op_tilde', '+': 'op_plus', '-': 'op_minus',
+  '*': 'op_mul', '/': 'op_div', '%': 'op_mod', '&': 'op_and', '|': 'op_or',
+  '^': 'op_xor', '<': 'op_lt', '>': 'op_gt', '~': 'op_tilde', '`': 'op_backtick',
+};
+// Longest spelling first, so `<=>` is not read as `<=` followed by `>`.
+const RUBY_OPERATOR_METHOD = Object.keys(RUBY_OPERATOR_FOLDER_NAMES)
+  .sort((a, b) => b.length - a.length)
+  .map((op) => op.replace(/[[\]^$.|?*+()\\/-]/g, '\\$&'))
+  .join('|');
+const RUBY_OPERATOR_DEF = new RegExp(String.raw`^def\s+(?:self\.)?(${RUBY_OPERATOR_METHOD})`);
+
 // `?`, `!` and `=` are part of a Ruby method's identity: valid?, valid! and
 // valid= are three different methods. safeName() flattens all three to
 // `valid_`, and mkdir is recursive, so without this encoding they silently
 // merge into one folder. Shared with the coverage audit so it compares the
 // same strings the tree was built from.
 function rubyMethodFolderName(name) {
+  if (Object.hasOwn(RUBY_OPERATOR_FOLDER_NAMES, name)) return RUBY_OPERATOR_FOLDER_NAMES[name];
   return String(name)
     .replace(/\?$/, '__q')
     .replace(/!$/, '__bang')
@@ -1000,6 +1020,10 @@ function stripRubyInline(line) {
       continue;
     }
     if (c === '#') break;
+    // A backtick that names the method (`def `(cmd)`, Kernel#` overridden) or
+    // a symbol (`:``) opens no command string. A label's colon (`{a:`ls`}`)
+    // follows an identifier, so it still does.
+    if (c === '`' && (/^\s*def\s+(?:self\.)?$/.test(out) || /(?:^|[\s(,[{=]):$/.test(out))) { out += c; continue; }
     if (c === '"' || c === "'" || c === '`') { quote = c; out += c; continue; }
     out += c;
   }
@@ -1008,9 +1032,9 @@ function stripRubyInline(line) {
 
 const RUBY_OPENERS = /^(?:def|class|module|if|unless|while|until|case|for|begin)\b/;
 const RUBY_BRANCH = /^(elsif|else|when|in|rescue|ensure)\b/;
-// `def foo = expr` / `def foo(a) = expr`. The mandatory space before `=`
+// `def foo = expr` / `def foo(a) = expr` / `def ==(o) = expr`. The mandatory space before `=`
 // distinguishes it from a setter (`def name=(v)`), where `=` binds to the name.
-const RUBY_ENDLESS_DEF = /^def\s+(?:self\.)?[A-Za-z_][A-Za-z0-9_]*[?!]?\s*(?:\([^)]*\))?\s+=\s/;
+const RUBY_ENDLESS_DEF = new RegExp(String.raw`^def\s+(?:self\.)?(?:[A-Za-z_][A-Za-z0-9_]*[?!]?|${RUBY_OPERATOR_METHOD})\s*(?:\([^)]*\))?\s+=\s`);
 // Heredoc tags: <<~TAG / <<-TAG / <<TAG / <<'TAG'. A bare <<TAG demands an
 // uppercase tag so that `arr <<item` is not mistaken for one.
 const RUBY_HEREDOC = /<<([-~])?(?:(['"])([A-Za-z_][A-Za-z0-9_]*)\2|([A-Z_][A-Z0-9_]*))/g;
@@ -1043,6 +1067,9 @@ function classifyRubyLine(line) {
     return { kind: m[1], name: m[2].replace(/::/g, '.') };
   }
   if ((m = line.match(/^def\s+(?:self\.)?([A-Za-z_][A-Za-z0-9_]*[?!=]?)/))) {
+    return { kind: 'fn', name: rubyMethodFolderName(m[1]) };
+  }
+  if ((m = line.match(RUBY_OPERATOR_DEF))) {
     return { kind: 'fn', name: rubyMethodFolderName(m[1]) };
   }
   if ((m = line.match(RUBY_BRANCH))) return { kind: m[1] === 'in' ? 'when' : m[1], name: '' };
@@ -1415,7 +1442,7 @@ class QuarkFolderEngine {
     '.mjs': /\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g,
     '.cjs': /\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g,
     '.ts': /\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g,
-    '.rb': /^[ \t]*def\s+(?:self\.)?([A-Za-z_][A-Za-z0-9_]*[?!=]?)/gm,
+    '.rb': /^[ \t]*def\s+(?:self\.)?([A-Za-z_][A-Za-z0-9_]*[?!=]?|\[\]=?|[-+!~]@|[<=>!~*\/%&|^+-]+|`)/gm,
   };
 
   // A language whose method names carry characters safeName() flattens must

@@ -392,3 +392,82 @@ test('a Ruby file reaches full symbol coverage under --strict-coverage', async (
     assert.match(result.stdout, /6\/6 \(100\.0%\)/);
   });
 });
+
+test('operator methods get their own folders and keep later methods at class level', async () => {
+  await withTempWorkspace(async (workspace) => {
+    const { result, fileQuark } = await runOnRuby(workspace, [
+      'class Money',
+      '  include Comparable',
+      '',
+      '  def ==(other)',
+      '    amount == other.amount',
+      '  end',
+      '',
+      '  def <=>(other) = amount <=> other.amount',
+      '',
+      '  def <=(other)',
+      '    (self <=> other) <= 0',
+      '  end',
+      '',
+      '  def [](key)',
+      '    @parts[key]',
+      '  end',
+      '',
+      '  def []=(key, value)',
+      '    @parts[key] = value',
+      '  end',
+      '',
+      '  def -@',
+      '    Money.new(-amount)',
+      '  end',
+      '',
+      '  def +(other) = Money.new(amount + other.amount)',
+      '',
+      '  def self.zero',
+      '    new(0)',
+      '  end',
+      'end',
+      '',
+    ].join('\n'), ['--strict-coverage']);
+
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stdout, /8\/8 \(100\.0%\)/);
+    const methods = (await readdir(path.join(fileQuark, 'class__Money')))
+      .filter((name) => name.startsWith('fn__'))
+      .sort();
+    assert.deepEqual(methods, [
+      'fn__op_cmp',
+      'fn__op_eq',
+      'fn__op_index',
+      'fn__op_index_set',
+      'fn__op_le',
+      'fn__op_plus',
+      'fn__op_uminus',
+      'fn__zero',
+    ]);
+  });
+});
+
+test('the backtick method is read as a method, not as an open command string', async () => {
+  await withTempWorkspace(async (workspace) => {
+    const { result, fileQuark } = await runOnRuby(workspace, [
+      'class Shell',
+      '  alias_method :run_raw, :`',
+      '',
+      '  def `(cmd) = system(cmd)',
+      '',
+      '  def run(cmd)',
+      '    `ls #{cmd}`',
+      '  end',
+      'end',
+      '',
+    ].join('\n'), ['--strict-coverage']);
+
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stdout, /2\/2 \(100\.0%\)/);
+    const methods = (await readdir(path.join(fileQuark, 'class__Shell')))
+      .filter((name) => name.startsWith('fn__'))
+      .sort();
+    assert.deepEqual(methods, ['fn__op_backtick', 'fn__run']);
+  });
+});
