@@ -83,6 +83,7 @@ Once analysis completes, Quarkify physically creates three core folders, an inte
 * **Python** (`.py`) - *Supports runtime version auto-detection, decorator parsing, and indentation-based statement (try-except-finally, if, for) deconstruction.*
 * **Java** (`.java`) - *Supports Spring Boot annotations & advanced try-catch-finally block deconstruction.*
 * **Ruby** (`.rb`) - *Keyword-block (`end`) parser: modules, classes, singleton and endless methods, case/when and rescue/ensure deconstruction. Predicate, bang and setter methods (`valid?`, `save!`, `name=`) keep distinct nodes, and class-body DSL macros (`has_many`, `validates`, `before_action`) are mapped to `annotation__` folders like Spring annotations.*
+* **Go** (`.go`) - *Functions, generics and receiver methods (`fn__Stack__Push`, so `String()` on two types never merges), structs with multi-name, embedded and tagged fields, interfaces, and grouped `type`/`var`/`const` blocks. Function bodies become statement trees: `if`/`else if`/`else`, three-clause and `range` loops, `switch`/`select` cases, each with its header split into `init___`/`cond___`/`range___`/`value___` folders, and closures (`go func() {…}()`, `t.Run(…, func…)`) get bodies of their own. Raw strings and runes are masked before braces are counted, and names that differ only by case (`Execute`/`execute`) keep distinct nodes on case-insensitive filesystems.*
 * **Zig** (`.zig`)
 * **CUDA C++** (`.cu`, `.cuh`)
 * **C / C++** (`.cpp`, `.cc`, `.cxx`, `.h`, `.hpp`)

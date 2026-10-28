@@ -83,6 +83,7 @@ Quarkify는 대규모 상용 및 오픈소스 프로젝트에 적용하여 대�
 * **Python** (`.py`) - *실행 환경 버전 동적 수집, 데코레이터 분석, 들여쓰기 기반의 클래스/함수 및 try-except-finally 분해 지원*
 * **Java** (`.java`) - *Spring Boot 어노테이션 및 고급 try-catch 흐름 분해 지원*
 * **Ruby** (`.rb`) - *`end` 키워드 블록 파서: 모듈/클래스/싱글턴 메서드/엔드리스 메서드, case-when 및 rescue-ensure 분해 지원. `valid?`, `save!`, `name=` 는 서로 다른 노드로 보존되며, 클래스 본문의 DSL 매크로(`has_many`, `validates`, `before_action`)는 Spring 어노테이션과 동일하게 `annotation__` 폴더로 매핑됩니다*
+* **Go** (`.go`) - *함수, 제네릭, 리시버 메서드(`fn__Stack__Push` — 두 타입의 `String()`이 합쳐지지 않음), 다중 이름/임베디드/태그 필드를 포함한 struct, interface, `type`/`var`/`const` 그룹 선언 지원. 함수 본문은 문장 트리로 분해됩니다: `if`/`else if`/`else`, 3절 및 `range` 루프, `switch`/`select` case의 헤더가 `init___`/`cond___`/`range___`/`value___` 폴더로 나뉘고, 클로저(`go func() {…}()`, `t.Run(…, func…)`)도 자체 본문을 가집니다. 중괄호를 세기 전에 raw string과 룬을 마스킹하며, 대소문자만 다른 이름(`Execute`/`execute`)도 대소문자 비구분 파일시스템에서 서로 다른 노드로 보존됩니다*
 * **Zig** (`.zig`)
 * **CUDA C++** (`.cu`, `.cuh`)
 * **C / C++** (`.cpp`, `.cc`, `.cxx`, `.h`, `.hpp`)

@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SUPPORTED_EXTENSIONS = new Set([
-  '.cc', '.cpp', '.cu', '.cuh', '.cxx', '.h', '.hpp', '.java', '.js', '.jsx',
+  '.cc', '.cpp', '.cu', '.cuh', '.cxx', '.go', '.h', '.hpp', '.java', '.js', '.jsx',
   '.cjs', '.m', '.metal', '.mjs', '.mm', '.ptx', '.py', '.rb', '.ts', '.tsx', '.zig',
 ]);
 
