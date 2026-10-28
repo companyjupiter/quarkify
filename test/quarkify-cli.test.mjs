@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -489,5 +489,50 @@ test('explicit sourceFiles cannot escape srcDir through a symlink', async (t) =>
 
     assert.notEqual(result.status, 0);
     assert.match(result.stderr || result.stdout, /outside srcDir/i);
+  });
+});
+
+test('a glob scan skips an outDir nested inside srcDir', async (t) => {
+  await withTempWorkspace(async (tmp) => {
+    const srcDir = path.join(tmp, 'src');
+    const outDir = path.join(srcDir, 'quark_out');
+    const configPath = path.join(tmp, 'config.mjs');
+
+    await mkdir(srcDir, { recursive: true });
+    await writeFile(path.join(srcDir, 'sample.js'), 'export function sampleThing() { return 1; }\n', 'utf8');
+    await writeConfig(configPath, `{
+      name: 'nested-outdir-glob-regression',
+      srcDir: ${JSON.stringify(srcDir)},
+      outDir: ${JSON.stringify(outDir)},
+      sourceFiles: ['**/*'],
+      perfData: {},
+      guessRole() { return 'general'; },
+    }`);
+
+    const first = runQuarkify(configPath, ['--allow-executable-config']);
+    assert.equal(first.status, 0, first.stderr || first.stdout);
+    assert.ok(existsSync(path.join(outDir, 'index.html')));
+
+    const second = runQuarkify(configPath, ['--allow-executable-config']);
+    assert.equal(second.status, 0, second.stderr || second.stdout);
+    assert.match(second.stdout, /총 1개 파일 매칭됨/);
+    assert.doesNotMatch(second.stdout, /분해 중: quark_out/);
+
+    // The output tree is pruned, not walked and filtered: a directory in it
+    // that cannot even be listed does not stop the scan.
+    if (process.platform === 'win32' || process.getuid?.() === 0) {
+      t.diagnostic('unreadable-directory check skipped: permissions are not enforced here');
+      return;
+    }
+    const locked = path.join(outDir, 'locked');
+    await mkdir(locked);
+    await chmod(locked, 0o000);
+    try {
+      const third = runQuarkify(configPath, ['--allow-executable-config']);
+      assert.equal(third.status, 0, third.stderr || third.stdout);
+      assert.match(third.stdout, /총 1개 파일 매칭됨/);
+    } finally {
+      await chmod(locked, 0o700);
+    }
   });
 });

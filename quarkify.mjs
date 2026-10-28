@@ -2756,14 +2756,15 @@ function splitParamsTopLevel(text) {
 }
 
 // ─── Glob 파일 검색 및 매칭 헬퍼 (Glob File Search & Match Helpers) ───
-function getFilesRecursively(dir, files = []) {
+// `skipDir` is pruned whole: it is never read, let alone returned.
+function getFilesRecursively(dir, files = [], skipDir = null) {
   if (!fs.existsSync(dir)) return files;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   for (const entry of entries) {
     const res = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name !== '.git' && entry.name !== 'node_modules') {
-        getFilesRecursively(res, files);
+      if (entry.name !== '.git' && entry.name !== 'node_modules' && res !== skipDir) {
+        getFilesRecursively(res, files, skipDir);
       }
     } else {
       files.push(res);
@@ -2887,7 +2888,13 @@ async function main() {
   const hasGlob = CONFIG.sourceFiles.some(f => f.includes('*'));
   if (hasGlob) {
     console.log('🔍 Glob 패턴 감지됨. 소스 디렉터리 스캔 중...');
-    const allFiles = getFilesRecursively(CONFIG.srcDir);
+    // An outDir nested in srcDir holds the previous run's output — a folder per
+    // symbol, easily far larger than the sources — so the walk prunes it rather
+    // than reading it back as source. It is spelled from CONFIG.srcDir, as the
+    // walk's own paths are, so a symlinked srcDir still matches.
+    const outReal = fs.existsSync(CONFIG.outDir) ? fs.realpathSync(CONFIG.outDir) : path.resolve(CONFIG.outDir);
+    const skipDir = isInsideDir(srcRoot, outReal) ? path.join(CONFIG.srcDir, path.relative(srcRoot, outReal)) : null;
+    const allFiles = getFilesRecursively(CONFIG.srcDir, [], skipDir);
     for (const fileAbs of allFiles) {
       const fileRel = path.relative(CONFIG.srcDir, fileAbs);
       const isMatched = CONFIG.sourceFiles.some(pat => matchGlobPattern(fileRel, pat));
