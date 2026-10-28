@@ -956,6 +956,19 @@ function emitBlockList(nodes, parentPath) {
   }
 }
 
+// An Objective-C selector is every keyword with its colon: `setValue:forKey:`
+// and `setValue:` are different methods, so keeping only the first keyword
+// merged them. `sig` is the signature after the `-`/`+`. Types are stripped
+// innermost-first so a block type such as `(void (^)(NSError *))` goes whole.
+function objcSelector(sig) {
+  let body = sig;
+  for (let prev = null; prev !== body;) { prev = body; body = body.replace(/\([^()]*\)/g, ' '); }
+  const keywords = [...body.matchAll(/([A-Za-z_][A-Za-z0-9_]*)?\s*:\s*[A-Za-z_][A-Za-z0-9_]*/g)].map((k) => `${k[1] || ''}:`);
+  if (keywords.length) return keywords.join('');
+  const unary = body.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)/);
+  return unary ? unary[1] : '';
+}
+
 // ─── Ruby (.rb) ───
 //
 // Ruby is keyword-delimited: every def/class/module/if/do is closed by a
@@ -2089,26 +2102,42 @@ class QuarkFolderEngine {
   // 간단한 인터페이스/구현/메소드 캡처. 깊이있는 분해는 향후 작업. (Simple interface/implementation/method capture. Deep decomposition is future work.)
   processObjC(text, fileQuarkPath, relPath) {
     const lines = text.split('\n');
+    // Methods nest under the @interface / @implementation / @protocol that
+    // declares them, so two classes in one file that both define `init`, or a
+    // class extension that declares what the @implementation then defines, do
+    // not collapse into one folder.
+    let container = null;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      // @interface NAME / @implementation NAME / @protocol NAME
+      // @interface NAME / @interface NAME (Category) / @implementation NAME / @protocol NAME
       let m;
-      if ((m = line.match(/^\s*@(interface|implementation|protocol)\s+([A-Za-z_][A-Za-z0-9_]*)/))) {
+      // A generic class (`NSArray<ObjectType>`, bounds one level deep) may carry
+      // a category too; on a protocol, the `<…>` is the protocols it adopts.
+      if ((m = line.match(/^\s*@(interface|implementation|protocol)\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s*<(?:[^<>]|<[^<>]*>)*>)?(?:\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)?\s*\))?/))) {
+        // A forward `@protocol Name;` / `@protocol A, B;` declares nothing to decompose.
+        if (m[1] === 'protocol' && /^\s*[;,]/.test(line.slice(m.index + m[0].length))) continue;
         const kind = `objc_${m[1]}`;
-        const name = m[2];
-        const role = guessRole(name);
+        const name = m[3] ? `${m[2]}+${m[3]}` : m[2];
+        const role = guessRole(m[2]);
         const dir = path.join(fileQuarkPath, `${kind}__${safeName(name)}`);
         mkdirSync(dir);
         this.registerMirror(kind, role, relPath, path.relative(this.quarkDir, dir));
+        container = dir;
         continue;
       }
-      // method: - (RetType)name:args... { or + (RetType)...
-      if ((m = line.match(/^\s*[-+]\s*\(([^)]+)\)\s*([A-Za-z_][A-Za-z0-9_:]*)/))) {
-        const method = m[2].split(':')[0];
-        const dir = path.join(fileQuarkPath, `objc_method__${safeName(method)}`);
+      if (/^\s*@end\b/.test(line)) { container = null; continue; }
+      // method: - (RetType)name:(Type)arg label:(Type)arg ... { or ;  (+ for class methods)
+      if ((m = line.match(/^\s*[-+]\s*\(([^)]+)\)\s*[A-Za-z_]/))) {
+        // A selector may wrap onto following lines; read up to the body or `;`.
+        let sig = line;
+        for (let j = i + 1; j < lines.length && j < i + 20 && !/[{;]/.test(sig); j++) sig += ` ${lines[j]}`;
+        const selector = objcSelector(sig.replace(/^\s*[-+]/, '').split(/[{;]/)[0]);
+        if (!selector) continue;
+        const dir = path.join(container || fileQuarkPath, `objc_method__${safeName(selector)}`);
+        if (fs.existsSync(dir)) continue; // a redeclared selector is the same method
         mkdirSync(dir);
         mkdirSync(path.join(dir, `ret_type__${safeName(m[1].trim()).substring(0, 40)}`));
-        this.registerMirror('objc_method', guessRole(method), relPath, path.relative(this.quarkDir, dir));
+        this.registerMirror('objc_method', guessRole(selector), relPath, path.relative(this.quarkDir, dir));
         continue;
       }
     }
