@@ -157,6 +157,12 @@ node quarkify.mjs configs/spring_analysis.json
 node quarkify.mjs --allow-executable-config configs/spring_analysis.mjs
 ```
 
+Zig, Python, JavaScript/TypeScript(`.js`, `.mjs`, `.cjs`, `.ts`), Ruby 파일은 실행 요약에 심볼 커버리지 한 줄이 함께 출력됩니다. 별도의 단순 스캔으로 각 파일이 선언한 함수를 찾고, 파서가 놓친 함수가 있으면 요약 뒤에 그 목록을 출력합니다. Java 등 다른 언어 파일은 아직 검사하지 않습니다. CI 등에서 누락이 있을 때 실행을 실패(종료 코드 1)로 처리하려면 `--strict-coverage` 를 추가합니다.
+
+```bash
+node quarkify.mjs --strict-coverage configs/python_analysis.json
+```
+
 ---
 
 ## 🔍 CLI 탐색 예시 (Everything is a folder의 가치)
