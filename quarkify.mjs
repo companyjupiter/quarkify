@@ -1430,15 +1430,69 @@ class QuarkFolderEngine {
     '.rb': stripRubyNonCodeSpans,
   };
 
-  // Strip line/block comments and string bodies so a `fn` inside prose or a
-  // literal is not reported as a missing symbol.
-  static stripNonCode(text) {
-    return text
-      .replace(/\/\*[\s\S]*?\*\//g, ' ')
-      .replace(/\/\/[^\n]*/g, ' ')
-      .replace(/#[^\n]*/g, ' ')
-      .replace(/"(?:[^"\\\n]|\\.)*"/g, '""')
-      .replace(/'(?:[^'\\\n]|\\.)*'/g, "''");
+  // Comment syntax of each scanned language. `#` is a comment only in Python
+  // and Ruby: in JS it is a private field or part of a string ("#fff"), and
+  // `//` in Python is floor division. In Zig, `\\` starts a multiline-string
+  // line that runs to the newline: Zig code often carries source text that way
+  // (templates, tests), and a `fn` or `/*` in it is text. Anything not listed
+  // is C-style.
+  static COMMENT_SYNTAX = {
+    '.py': { line: ['#'], block: null, tripleQuotes: true },
+    '.rb': { line: ['#'], block: null },
+    '.zig': { line: ['//'], block: ['/*', '*/'], lineString: '\\\\' },
+  };
+  static DEFAULT_COMMENT_SYNTAX = { line: ['//'], block: ['/*', '*/'] };
+
+  // Blank out comments and string bodies so a `fn` inside prose or a literal is
+  // not reported as a missing symbol.
+  //
+  // One left-to-right pass, not a chain of regex replaces: a pass per construct
+  // cannot tell a comment marker inside a string from a real one. The block
+  // comment pass ran first and read the `/*` in 'image/*' or 'src/*.js' as a
+  // comment opener, deleting every declaration up to the next `*/` — without a
+  // gap, since the audit simply stopped expecting them. Newlines are kept so
+  // the line-anchored scans still see line starts.
+  // ponytail: regex literals are not tracked, so a quote inside one (/'/) still
+  // blanks the rest of its line, as it did before.
+  static stripNonCode(text, ext) {
+    const syntax = QuarkFolderEngine.COMMENT_SYNTAX[ext] || QuarkFolderEngine.DEFAULT_COMMENT_SYNTAX;
+    const templates = JS_FAMILY_EXTENSIONS.has(ext);
+    const keepNewlines = (span) => span.replace(/[^\n]/g, '');
+    const n = text.length;
+    let out = '';
+    let i = 0;
+    while (i < n) {
+      const c = text[i];
+      if (syntax.block && text.startsWith(syntax.block[0], i)) {
+        const end = text.indexOf(syntax.block[1], i + syntax.block[0].length);
+        const stop = end < 0 ? n : end + syntax.block[1].length;
+        out += ' ' + keepNewlines(text.slice(i, stop));
+        i = stop;
+      } else if (syntax.line.some((marker) => text.startsWith(marker, i)) ||
+                 (syntax.lineString && text.startsWith(syntax.lineString, i))) {
+        const end = text.indexOf('\n', i);
+        out += ' ';
+        i = end < 0 ? n : end;
+      } else if (syntax.tripleQuotes && (text.startsWith('"""', i) || text.startsWith("'''", i))) {
+        const quote = text.slice(i, i + 3);
+        let j = i + 3;
+        while (j < n && !text.startsWith(quote, j)) j += text[j] === '\\' ? 2 : 1;
+        const stop = Math.min(n, j + 3);
+        out += quote + keepNewlines(text.slice(i + 3, stop)) + quote;
+        i = stop;
+      } else if (c === '"' || c === "'" || (templates && c === '`')) {
+        // Plain quotes end at the line; a JS template literal may span lines.
+        let j = i + 1;
+        while (j < n && text[j] !== c && (c === '`' || text[j] !== '\n')) j += text[j] === '\\' ? 2 : 1;
+        const stop = j < n && text[j] === c ? j + 1 : Math.min(j, n);
+        out += c + keepNewlines(text.slice(i + 1, stop)) + c;
+        i = stop;
+      } else {
+        out += c;
+        i++;
+      }
+    }
+    return out;
   }
 
   recordExpectedSymbols(text, ext, relPath, fileFolderName) {
@@ -1446,7 +1500,7 @@ class QuarkFolderEngine {
     if (!pattern) return; // no independent scan for this language yet
     const names = new Set();
     const preStrip = QuarkFolderEngine.SOURCE_PRE_STRIPS[ext];
-    const code = QuarkFolderEngine.stripNonCode(preStrip ? preStrip(text) : text);
+    const code = QuarkFolderEngine.stripNonCode(preStrip ? preStrip(text) : text, ext);
     for (const match of code.matchAll(pattern)) names.add(match[1]);
     if (names.size) this.expectedSymbols.push({ relPath, fileFolderName, names, ext });
   }
