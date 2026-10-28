@@ -229,6 +229,45 @@ const QUARKIFY_VERSION = '1.1.0';
 // symbol audit reported 0% coverage on any ESM codebase.
 const JS_FAMILY_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
 
+// Does the text after a `=` start an arrow function? TypeScript puts a return
+// type between `)` and `=>` (`async (a: string): Promise<void> =>`), generics
+// before the parameters (`<T,>(x: T) =>`), and prettier breaks long parameter
+// lists over several lines — so follow the parentheses into the next lines
+// before looking for the arrow.
+function jsArrowFollows(lines, i, rhs) {
+  let text = rhs;
+  for (let j = i + 1; j < Math.min(lines.length, i + 30) && text.length < 2000; j++) text += `\n${lines[j]}`;
+  let p = 0;
+  const skipWs = () => { while (p < text.length && /\s/.test(text[p])) p++; };
+  // A delimiter inside a string or comment is text: `(x = "(") =>` would
+  // otherwise never balance and the arrow would be lost.
+  const skipBalanced = (open, close) => {
+    for (let depth = 0; p < text.length; p++) {
+      const c = text[p];
+      if (c === '"' || c === "'" || c === '`') {
+        for (p++; p < text.length && text[p] !== c; p++) if (text[p] === '\\') p++;
+      } else if (c === '/' && text[p + 1] === '/') {
+        while (p < text.length && text[p] !== '\n') p++;
+      } else if (c === '/' && text[p + 1] === '*') {
+        const end = text.indexOf('*/', p + 2);
+        p = end < 0 ? text.length : end + 1;
+      } else if (c === open) depth++;
+      else if (c === close && --depth === 0) { p++; return; }
+    }
+  };
+  skipWs();
+  if (/^async\b/.test(text.slice(p, p + 6))) { p += 5; skipWs(); }
+  if (text[p] === '<') { skipBalanced('<', '>'); skipWs(); }
+  if (text[p] === '(') {
+    skipBalanced('(', ')');
+  } else {
+    const id = /^[A-Za-z_$][\w$]*/.exec(text.slice(p, p + 200));
+    if (!id) return false;
+    p += id[0].length;
+  }
+  return /^\s*(?::[^;]*?)?=>/.test(text.slice(p, p + 300));
+}
+
 // ─── PTX arg 의미 분류 (PTX Argument Classification) ───
 function classifyPtxArg(raw, opcode) {
   let r = raw.trim();
@@ -1411,10 +1450,12 @@ class QuarkFolderEngine {
   static NAIVE_SYMBOL_SCANS = {
     '.zig': /\bfn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/g,
     '.py': /^[ \t]*def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/gm,
-    '.js': /\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g,
-    '.mjs': /\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g,
-    '.cjs': /\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g,
-    '.ts': /\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g,
+    // `[(<]`: a TypeScript generic declaration has its type parameters
+    // between the name and `(` (`function identity<T>(arg: T)`).
+    '.js': /\bfunction\b\s*\*?\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*[(<]/g,
+    '.mjs': /\bfunction\b\s*\*?\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*[(<]/g,
+    '.cjs': /\bfunction\b\s*\*?\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*[(<]/g,
+    '.ts': /\bfunction\b\s*\*?\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*[(<]/g,
     '.rb': /^[ \t]*def\s+(?:self\.)?([A-Za-z_][A-Za-z0-9_]*[?!=]?)/gm,
   };
 
@@ -1814,14 +1855,22 @@ class QuarkFolderEngine {
         } else if (JS_FAMILY_EXTENSIONS.has(ext)) {
           const trimmed = line.trim();
           if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*') || trimmed.length === 0 || trimmed.startsWith('import ') || trimmed.startsWith('export *')) {
-          } else if ((m = line.match(/^\s*(?:export\s+)?(class|interface)\s+([a-zA-Z0-9_]+)/))) {
+          } else if ((m = line.match(/^\s*(?:export\s+)?(?:default\s+)?(?:abstract\s+)?(class|interface)\s+([a-zA-Z0-9_]+)/))) {
             name = m[2]; kind = m[1]; role = 'type';
-          } else if ((m = line.match(/^\s*(?:export\s+)?(?:async\s+)?function\s+([a-zA-Z0-9_]+)\s*\(/))) {
+          } else if ((m = line.match(/^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\b\s*\*?\s*([a-zA-Z0-9_$]+)\s*[(<]/))) {
             name = m[1]; kind = 'fn'; role = guessRole(name);
-          } else if ((m = line.match(/^\s*(?:export\s+)?(?:const|let|var)\s+([a-zA-Z0-9_]+)\s*=\s*(?:async\s+)?(?:\([^)]*\)|[a-zA-Z0-9_]+)\s*=>/))) {
+          } else if ((m = line.match(/^\s*(?:export\s+)?(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*(?::[^=]+)?=\s*(.*)$/)) &&
+                     (/^(?:async\s+)?function\b/.test(m[2]) || jsArrowFollows(lines, i, m[2]))) {
             name = m[1]; kind = 'fn'; role = guessRole(name);
-          } else if ((m = line.match(/^\s*(?:export\s+)?(?:const|let|var)\s+([a-zA-Z0-9_]+)\s*=\s*(?:async\s+)?function\b/))) {
-            name = m[1]; kind = 'fn'; role = guessRole(name);
+          } else if ((m = line.match(/^\s*((?:[a-zA-Z0-9_$]+\.)+([a-zA-Z0-9_$]+)\s*=\s*)+(.*)$/))) {
+            // CommonJS / prototype style: `exports.parse = function parse(`,
+            // `View.prototype.render = function render(`, and chains like
+            // `req.get = req.header = function header(`. A named function
+            // expression keeps its own name; otherwise the property's.
+            const fnExpr = m[3].match(/^(?:async\s+)?function\b\s*\*?\s*([a-zA-Z0-9_$]*)\s*[(<]/);
+            if (fnExpr || jsArrowFollows(lines, i, m[3])) {
+              name = (fnExpr && fnExpr[1]) || m[2]; kind = 'fn'; role = guessRole(name);
+            }
           }
         }
         if (name) {
